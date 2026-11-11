@@ -25,9 +25,18 @@ struct Candidate {
   double r = NAN;          // correlation of the drift-removed wobble
   double score = NAN;      // ranking score (joint log-likelihood ratio, or r)
   double r_raw = NAN, offset_hz = NAN, rmse_hz = NAN;
+  // Hum measured from audio is the grid's frequency itself, in Hz, so at the true time
+  // the clip's wobble has the grid's size (gain: slope of the clip's wobble on the
+  // reference's, ~1) and the clip rarely strays from the reference (mismatch: share of
+  // frames more than MISMATCH_HZ off, after the constant offset). A noise trace can
+  // correlate with a grid whose wobble is 5x its own, or follow a spiky grid's shape
+  // while sitting at the band edges: NaN = not measured.
+  double gain = NAN, mismatch = NAN;
   int origin = 0;  // index of the query (hum hypothesis) that produced it
   std::string start_iso() const { return iso(start_utc); }
+  bool consistent() const;  // gain and mismatch within physical bounds (unmeasured passes)
 };
+constexpr double GAIN_MIN = 0.5, GAIN_MAX = 2.0, MISMATCH_HZ = 0.1, MISMATCH_MAX = 0.1;
 
 struct GridResult {
   std::string grid;
@@ -38,7 +47,9 @@ struct GridResult {
   std::string note;
   std::optional<int> nominal;
   int trace_index = 0;
-  const Candidate* best() const { return candidates.empty() ? nullptr : &candidates[0]; }
+  // Candidates rank consistent ones first; a grid whose best is not consistent has no
+  // match (its scores still count as wrong matches when judging the others).
+  const Candidate* best() const { return candidates.empty() || !candidates[0].consistent() ? nullptr : &candidates[0]; }
   double margin() const { return candidates.size() < 2 ? NAN : candidates[0].score - candidates[1].score; }
 };
 
@@ -90,6 +101,10 @@ struct Verdict {
   double p_false = NAN;
 };
 double false_match_probability(std::vector<double> scores, std::size_t k_max = 30);
+// Wobble of a 1 s series with its outliers clipped at k robust standard deviations
+// (median +- k * 1.4826 MAD), so a few spikes can't make a correlation on their own.
+void clip_outliers(std::span<double> x, double k = 4.0);
+void clip_outliers(std::span<float> x, double k = 4.0);
 Level confidence_level(double p, double r);
 Verdict judge(const std::vector<GridResult>& results, double duration_s);
 

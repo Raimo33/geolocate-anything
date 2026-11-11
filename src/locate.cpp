@@ -507,6 +507,13 @@ std::string render_text(const Report& rep) {
   if (!rep.results.empty()) {
     L.emplace_back("== Grid matches (score: log-likelihood ratio vs. a random time, from wobble shape + level; r: wobble correlation)");
     for (auto& g : rep.results) {
+      if (!g.best() && !g.candidates.empty()) {  // every candidate failed the gain/mismatch check
+        const auto& c = g.candidates[0];
+        std::snprintf(b, sizeof b, "  %-22s no consistent match (best score=%6.1f r=%.3f: wobble gain %s, %s of frames off by >%.0f mHz)",
+                      g.grid.c_str(), c.score, c.r, pyf(c.gain, "%.2f").c_str(), pct0(c.mismatch).c_str(), match::MISMATCH_HZ * 1000);
+        L.emplace_back(b);
+        continue;
+      }
       if (!g.best()) {
         std::snprintf(b, sizeof b, "  %-22s no overlap (%s)", g.grid.c_str(), g.note.c_str());
         L.emplace_back(b);
@@ -523,7 +530,8 @@ std::string render_text(const Report& rep) {
       for (std::size_t i = 0; i < std::min<std::size_t>(5, top.candidates.size()); ++i) {
         const auto& cd = top.candidates[i];
         L.push_back("    " + cd.start_iso() + "  score=" + pyf(cd.score, "%6.1f") + "  r=" + pyf(cd.r, "%.3f") + "  offset=" +
-                    pyf(cd.offset_hz * 1000, "%+.1f") + " mHz  rmse=" + pyf(cd.rmse_hz * 1000, "%.1f") + " mHz");
+                    pyf(cd.offset_hz * 1000, "%+.1f") + " mHz  rmse=" + pyf(cd.rmse_hz * 1000, "%.1f") + " mHz  gain=" + pyf(cd.gain, "%.2f") +
+                    "  off=" + pct0(cd.mismatch) + (cd.consistent() ? "" : "  (inconsistent)"));
       }
     }
     L.emplace_back("");
@@ -616,6 +624,9 @@ static json::value cand_json(const Candidate* c) {
   o["r_raw"] = num_or_null(c->r_raw);
   o["offset_hz"] = num_or_null(c->offset_hz);
   o["rmse_hz"] = num_or_null(c->rmse_hz);
+  o["gain"] = num_or_null(c->gain);
+  o["mismatch"] = num_or_null(c->mismatch);
+  o["consistent"] = c->consistent();
   o["start_iso"] = c->start_iso();
   return o;
 }

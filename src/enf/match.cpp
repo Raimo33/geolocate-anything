@@ -591,8 +591,13 @@ std::vector<std::size_t> local_peaks(std::span<const float> score, std::size_t k
   return cand;
 }
 
+bool Candidate::consistent() const { return !(gain < GAIN_MIN || gain > GAIN_MAX || mismatch > MISMATCH_MAX); }
+
 std::vector<Candidate> merge_topk(std::vector<Candidate> c, std::size_t k, double exclusion) {
-  std::stable_sort(c.begin(), c.end(), [](auto& a, auto& b) { return a.score > b.score; });
+  std::stable_sort(c.begin(), c.end(), [](auto& a, auto& b) {
+    const bool ca = a.consistent(), cb = b.consistent();
+    return ca != cb ? ca : a.score > b.score;
+  });
   std::vector<Candidate> out;
   for (auto& x : c) {
     bool far = std::all_of(out.begin(), out.end(), [&](auto& u) { return std::fabs(x.start_utc - u.start_utc) >= exclusion; });
@@ -967,7 +972,26 @@ static float exact_score(float r, double cnt, double sum, int m, double q_mean, 
   return 0.5f * zs * std::fabs(zs) + P.lut[idx];
 }
 
-static void describe(Candidate& c, const ENFTrace& tr, const std::string& grid) {
+template <class T>
+static void clip_outliers_impl(std::span<T> x, double k) {
+  // Robust spread from every 16th finite sample: deterministic, and cheap on a block.
+  std::vector<float> v;
+  const std::size_t step = x.size() > (std::size_t(1) << 16) ? 16 : 1;
+  for (std::size_t i = 0; i < x.size(); i += step)
+    if (std::isfinite(x[i])) v.push_back(float(x[i]));
+  if (v.size() < 20) return;
+  const double med = dsp::median_inplace(std::span<float>(v));
+  for (auto& u : v) u = float(std::fabs(double(u) - med));
+  const double sd = 1.4826 * dsp::median_inplace(std::span<float>(v));
+  if (!(sd > 0)) return;
+  const T lo = T(med - k * sd), hi = T(med + k * sd);
+  for (auto& u : x)
+    if (u == u) u = std::clamp(u, lo, hi);  // NaN stays NaN
+}
+void clip_outliers(std::span<double> x, double k) { clip_outliers_impl(x, k); }
+void clip_outliers(std::span<float> x, double k) { clip_outliers_impl(x, k); }
+
+static void describe(Candidate& c, const ENFTrace& tr, const std::string& grid, int hp) {
   const double first = tr.times[0];
   const i64 t0 = static_cast<i64>(std::floor(c.start_utc + first + 0.5));
   const std::size_t m = tr.freq.size();
@@ -1000,6 +1024,28 @@ static void describe(Candidate& c, const ENFTrace& tr, const std::string& grid) 
   }
   double den = std::sqrt(aa * bb);
   c.r_raw = den > 0 ? ab / den : NAN;
+  std::size_t off = 0;
+  for (double x : d) off += std::fabs(x - md) > MISMATCH_HZ;
+  c.mismatch = double(off) / n;
+  // Gain: least-squares slope of the clip's wobble on the reference's (the search's
+  // high-pass). Noise in the clip doesn't bias it; it is ~1 at the true time.
+  std::vector<double> qd(m, NAN), sd(m, NAN);
+  for (std::size_t i = 0; i < m; ++i) {
+    qd[i] = tr.freq[i] - tr.nominal;
+    sd[i] = sm[16 + i];
+  }
+  auto qh = dsp::highpass(qd, hp), sh = dsp::highpass(sd, hp);
+  double sq = 0, ss2 = 0, sxy = 0, sxx = 0, k = 0;
+  for (std::size_t i = 0; i < m; ++i)
+    if (std::isfinite(qh[i]) && std::isfinite(sh[i])) sq += qh[i], ss2 += sh[i], ++k;
+  if (k < 10) return;
+  sq /= k, ss2 /= k;
+  for (std::size_t i = 0; i < m; ++i)
+    if (std::isfinite(qh[i]) && std::isfinite(sh[i])) {
+      sxy += (qh[i] - sq) * (sh[i] - ss2);
+      sxx += (sh[i] - ss2) * (sh[i] - ss2);
+    }
+  if (sxx > 0) c.gain = sxy / sxx;
 }
 
 // ---------------------------------------------------------------- search
@@ -1028,6 +1074,7 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
     auto dev = tr.deviation();
     try {
       auto hq = dsp::highpass(dev, q.hp);
+      clip_outliers(std::span<double>(hq));
       q.query = std::make_unique<Query>(hq, o.min_overlap);
       for (int D = o.decimate; D > 1 && !q.coarse; --D) {
         if (q.m / D < o.min_coarse_len) continue;
@@ -1229,6 +1276,7 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
     dsp::smooth_like_frames<float>(raw, job.frame_s, w.smooth);
     w.hpv.resize(w.smooth.size());
     dsp::highpass<float>(w.smooth, job.hp, w.hpv);
+    clip_outliers(std::span<float>(w.hpv));
     auto& out = parts[ji];
     out.resize(job.active.size());
     for (std::size_t k = 0; k < job.active.size(); ++k) {
@@ -1327,7 +1375,8 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
       continue;
     }
     res.candidates = merge_topk(std::move(q.cands), std::size_t(o.top_k), q.excl);
-    for (std::size_t k = 0; k < std::min<std::size_t>(5, res.candidates.size()); ++k) describe(res.candidates[k], *q.tr, grid);
+    for (auto& c : res.candidates) describe(c, *q.tr, grid, q.hp);
+    std::stable_partition(res.candidates.begin(), res.candidates.end(), [](auto& c) { return c.consistent(); });
     if (res.candidates.empty()) res.note = "no overlap with valid reference data";
   }
   fft::save_wisdom();
@@ -1397,13 +1446,23 @@ Verdict judge(const std::vector<GridResult>& results, double duration_s) {
   std::stable_sort(scored.begin(), scored.end(), [](auto* a, auto* b) { return a->best()->score > b->best()->score; });
   const auto* top = scored[0];
   const Candidate& c = *top->best();
-  std::vector<double> pool;
-  for (auto* g : scored)
-    for (auto& cd : g->candidates) pool.push_back(cd.score);
-  double p = false_match_probability(pool);
+  // The odds that a wrong time leads by this much come from the winning grid's own
+  // wrong matches, then corrected for the number of grids searched: grids differ in how
+  // high noise scores (a fast-wobbling small grid scores higher than a big one), so a
+  // pool across grids made the leader of a high-scoring grid look rarer than it is.
+  std::vector<double> own, pool;
+  for (auto& cd : top->candidates) own.push_back(cd.score);
+  std::size_t n_grids = 0;
+  for (auto& g : results) {
+    n_grids += g.n_lags > 0 || !g.candidates.empty();
+    for (auto& cd : g.candidates) pool.push_back(cd.score);
+  }
+  double p = false_match_probability(own);
+  if (std::isfinite(p)) p = 1 - std::pow(1 - p, double(std::max<std::size_t>(1, n_grids)));
   std::vector<double> sorted = pool;
   std::sort(sorted.rbegin(), sorted.rend());
-  double runner = sorted.size() > 1 ? sorted[1] : NAN;
+  std::erase(sorted, c.score);  // the leader itself; the rest are wrong times or grids
+  double runner = sorted.empty() ? NAN : sorted[0];
   v.reasons.push_back("best match in " + top->grid + ": score " + pyf(c.score, "%.1f") + ", wobble r=" + pyf(c.r, "%.3f") +
                       ", raw r=" + pyf(c.r_raw, "%.3f"));
   v.reasons.push_back("best wrong time/grid scored " + pyf(runner, "%.1f"));

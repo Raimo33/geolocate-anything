@@ -232,3 +232,80 @@ TEST(Search, ThreadsDoNotChangeResult) {
     }
   }
 }
+
+// The clip's wobble has the reference's shape but a fifth of its size: hum measured in
+// Hz can't do that at the true time, so the grid has no match (a noise trace against a
+// fast-wobbling grid looks like this). At full size the same trace matches.
+TEST(Search, WobbleOfTheWrongSizeIsNoMatch) {
+  test::use_refstore();
+  auto [t0, t1] = month_bounds(test::MONTH);
+  auto ref = store::read("great_britain", t0, t1);
+  for (double g : {1.0, 0.2}) {
+    auto tr = trace_at(ref, 700000, false);
+    for (auto& f : tr.freq) f = 50.0 + g * (f - 50.0);
+    auto res = match::search_grid(tr, "great_britain");
+    ASSERT_FALSE(res.candidates.empty());
+    const auto& c = res.candidates[0];
+    if (g == 1.0) {
+      ASSERT_TRUE(res.best());
+      EXPECT_LT(std::fabs(c.start_utc - double(t0 + 700000)), 1.5);
+      EXPECT_NEAR(c.gain, 1.0, 0.1);
+      EXPECT_LT(c.mismatch, 0.01);
+    } else {
+      EXPECT_FALSE(res.best()) << "gain " << c.gain;
+      for (auto& x : res.candidates) EXPECT_FALSE(x.consistent()) << x.start_iso() << " gain " << x.gain;
+    }
+  }
+}
+
+TEST(Search, ConsistentCandidatesRankFirst) {
+  match::Candidate a, b, c;
+  a.score = 30, a.gain = 0.15, a.start_utc = 0;     // the best score, 7x too small a wobble
+  b.score = 20, b.gain = 1.1, b.start_utc = 1000;   // consistent
+  c.score = 25, c.mismatch = 0.3, c.start_utc = 2000;  // a third of its frames off the reference
+  auto m = match::merge_topk({a, b, c}, 3, 30);
+  ASSERT_EQ(m.size(), 3u);
+  EXPECT_EQ(m[0].score, 20);
+  EXPECT_EQ(m[1].score, 30);
+  EXPECT_EQ(m[2].score, 25);
+}
+
+TEST(Search, ClipOutliersKeepsTheBulkAndGaps) {
+  auto x = test::normal(5000, 3, 0.01);
+  x[10] = 1.0;
+  x[20] = -1.0;
+  x[30] = NAN;
+  auto y = x;
+  match::clip_outliers(std::span<double>(y));
+  EXPECT_LT(y[10], 0.05);
+  EXPECT_GT(y[20], -0.05);
+  EXPECT_TRUE(std::isnan(y[30]));
+  std::size_t changed = 0;
+  for (std::size_t i = 0; i < x.size(); ++i) changed += std::isfinite(x[i]) && x[i] != y[i];
+  EXPECT_LT(changed, 10u);  // a Gaussian bulk is barely touched at 4 sigma
+}
+
+// A grid whose wrong times score in a wide spread (a small, fast-wobbling grid) leads by
+// a gap that is ordinary among its own wrong times. Pooled with another grid's tightly
+// packed scores, that gap looked rare (p ~ 3e-6: STRONG).
+TEST(Verdict, OddsComeFromTheLeadersOwnGrid) {
+  match::GridResult hi, lo;
+  hi.grid = "hi", lo.grid = "lo";
+  hi.n_lags = lo.n_lags = 1000000;
+  for (int i = 0; i < 30; ++i) {
+    match::Candidate c;
+    c.r = 0.6;
+    c.start_utc = 1000.0 * i;
+    c.grid = "hi", c.score = 30 - 2.0 * i;
+    hi.candidates.push_back(c);
+    c.grid = "lo", c.score = 27.9 - 0.01 * i;
+    lo.candidates.push_back(c);
+  }
+  std::vector<double> pooled;
+  for (auto* g : {&hi, &lo})
+    for (auto& c : g->candidates) pooled.push_back(c.score);
+  EXPECT_LT(match::false_match_probability(pooled), 1e-4);  // what pooling said
+  auto v = match::judge({hi, lo}, 1800);
+  EXPECT_EQ(v.level, match::Level::None) << v.p_false;
+  EXPECT_GT(v.p_false, 0.1);
+}
