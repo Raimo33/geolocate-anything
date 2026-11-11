@@ -27,6 +27,7 @@ namespace {
 constexpr const char* DATASELECT = "https://service.earthscope.org/fdsnws/dataselect/1/query";
 constexpr const char* SHAKE_DATASELECT = "https://data.raspberryshake.org/fdsnws/dataselect/1/query";
 constexpr i64 CHUNK_S = 6 * 3600;  // one request per station and 6 h
+constexpr int SHAKE_IN_FLIGHT = 10;  // Raspberry Shake requests in flight (see fetch_month)
 constexpr int PROBE_EVERY = 4;     // Raspberry Shake: one chunk a day first (see fetch_month)
 constexpr i64 PAD_S = 10;          // frame half-length + filter, either side
 
@@ -351,12 +352,16 @@ std::vector<std::string> months(const Network& net) {
 
 asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, const std::string& month, std::function<bool(i64, i64)> skip) {
   // Requests in flight: EarthScope allows 5 concurrent connections per client. The
-  // Raspberry Shake archive has no stated limit; there the chunks in flight are bounded
-  // by the cores their decoding keeps busy (GEOLOC_THREADS, default: all of them, 4 to 8).
-  int parallel = 4;
+  // Raspberry Shake archive takes 6 to 10 s to answer each 6 h request, however many are
+  // in flight (six at once each took as long as one alone), so there SHAKE_IN_FLIGHT are
+  // in flight (still starting at most one a second, shake_pace) while only `decode_slots`
+  // chunks decode at once (GEOLOC_THREADS, default: all cores, 4 to 8). A chunk waiting to
+  // decode holds its download, a few MB.
+  int parallel = 4, decode_slots = 1 << 30, decoding = 0;
   if (net.nyquist) {
     const std::string t = env("GEOLOC_THREADS");
-    parallel = !t.empty() ? std::clamp(std::atoi(t.c_str()), 1, 32) : std::clamp(int(std::thread::hardware_concurrency()), 4, 8);
+    decode_slots = !t.empty() ? std::clamp(std::atoi(t.c_str()), 1, 32) : std::clamp(int(std::thread::hardware_concurrency()), 4, 8);
+    parallel = std::max(decode_slots, SHAKE_IN_FLIGHT);
   }
   const int base_stations = net.base_stations, max_stations = net.max_stations;
   const std::string name = net.source;
@@ -451,7 +456,15 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
         std::string().swap(body);
         return nyquist ? track_nyquist(segs, j.a, j.b, nopt) : track_hum(segs, j.a, j.b, topt);
       };
-      tracked = co_await net::run_in_thread(std::move(work));
+      while (decoding >= decode_slots) co_await net::sleep_for(0.05);  // one event loop: no race
+      ++decoding;
+      try {
+        tracked = co_await net::run_in_thread(std::move(work));
+      } catch (...) {
+        --decoding;
+        throw;
+      }
+      --decoding;
       if (!tracked) {
         ++failed, ++failed_by[j.st], last_err = std::string("decode ") + id + ": " + decode_err, failed_chunks.insert(j.a);
         co_return;
