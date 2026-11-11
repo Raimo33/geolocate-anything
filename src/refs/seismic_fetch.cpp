@@ -108,6 +108,7 @@ struct EsAuth {
   std::string access;
   double expires = 0;
   bool announced = false;
+  bool refreshing = false;  // one exchange at a time: the others wait for its token
   std::string failed;  // a refused refresh token is not tried again
 };
 EsAuth& es_auth() {
@@ -119,16 +120,42 @@ EsAuth& es_auth() {
 asio::awaitable<std::string> es_bearer(net::Http& http) {
   EsAuth& a = es_auth();
   if (a.refresh.empty()) co_return std::string();
+  while (a.refreshing) co_await net::sleep_for(1.0);
   if (!a.failed.empty()) throw std::runtime_error(a.failed);
   if (a.access.empty() || now_seconds() > a.expires - 300) {
-    net::Request rq;
-    rq.url = ES_TOKEN_URL;
-    rq.method = "POST";
-    rq.headers = {"Content-Type: application/x-www-form-urlencoded"};
-    rq.body = "grant_type=refresh_token&client_id=" + std::string(ES_CLIENT_ID) + "&refresh_token=" + url_encode(a.refresh) +
-              "&scopes=offline_access";
-    rq.total_timeout_s = 60;
-    net::Response r = co_await http.fetch(std::move(rq));
+    a.refreshing = true;
+    struct Done {
+      EsAuth& a;
+      ~Done() { a.refreshing = false; }
+    } done{a};
+    // Transport errors, 408, 429 and 5xx are passing trouble (a dropped connection, a busy
+    // login server): retried with a doubling wait (15 s up to 10 min) for up to an hour,
+    // like the downloads, instead of failing every request of the month at once.
+    net::Response r;
+    double waited = 0;
+    for (int attempt = 0;; ++attempt) {
+      net::Request rq;
+      rq.url = ES_TOKEN_URL;
+      rq.method = "POST";
+      rq.headers = {"Content-Type: application/x-www-form-urlencoded"};
+      rq.body = "grant_type=refresh_token&client_id=" + std::string(ES_CLIENT_ID) + "&refresh_token=" + url_encode(a.refresh) +
+                "&scopes=offline_access";
+      rq.total_timeout_s = 60;
+      r = co_await http.fetch(std::move(rq));
+      const bool passing = !r.error.empty() || r.status == 408 || r.status == 429 || r.status >= 500;
+      if (!passing) break;
+      if (waited >= 3600) {  // an hour without a token: give up for this process, not once per request
+        a.failed = "EarthScope login failed for an hour (" + (r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error) + ")";
+        break;
+      }
+      double delay = std::min(600.0, 15.0 * double(1 << std::min(attempt, 6)));
+      const std::string ra = r.header("retry-after");
+      if (!ra.empty() && std::all_of(ra.begin(), ra.end(), ::isdigit)) delay = std::clamp(std::stod(ra), 1.0, 1800.0);
+      std::cerr << "  seismic: EarthScope login: " << (r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error)
+                << ", retrying in " << int(delay) << " s" << std::endl;
+      waited += delay;
+      co_await net::sleep_for(delay);
+    }
     std::string access;
     double ttl = 0;
     if (r.ok()) try {
