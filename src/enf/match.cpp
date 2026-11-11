@@ -15,6 +15,7 @@
 #include "dsp/fft.hpp"
 #include "dsp/filters.hpp"
 #include "util/files.hpp"
+#include "util/parallel.hpp"
 
 namespace geo::match {
 
@@ -29,12 +30,7 @@ std::string pyf(double x, const char* spec) {
   return b;
 }
 
-int search_threads(int requested) {
-  if (requested > 0) return requested;
-  const std::string t = env("GEOLOC_THREADS");
-  if (!t.empty()) return std::clamp(std::atoi(t.c_str()), 1, 256);
-  return std::max(1, int(std::thread::hardware_concurrency()));
-}
+int search_threads(int requested) { return worker_threads(requested); }
 
 int hp_window_for(int m, int hp_window_s) {
   static constexpr int W[] = {15, 31, 61, 121};

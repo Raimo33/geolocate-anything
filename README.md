@@ -253,8 +253,10 @@ are backfilled on a separate machine and pushed (`refs push`), never refreshed b
 dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
 2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);
 `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
-cores, 4 to 8), and how many threads a search spreads its blocks over (default: every
-core; each takes ~30 MB).
+cores, 4 to 8), and how many threads `locate` uses (default: every core): a search
+spreads its blocks over them (~30 MB each), long compressed audio is decoded and
+resampled in 30 s chunks on them (the same samples as one pass), and the faint-hum
+ridge test scores its off-grid nulls on them.
 
 ## Building
 

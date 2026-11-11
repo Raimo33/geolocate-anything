@@ -19,6 +19,30 @@ TEST(Audio, WavRoundtripResamplesTo1kHz) {
   fs::remove_all(dir);
 }
 
+// Long compressed files decode in chunks on several threads; the samples are those of
+// one pass. (Needs the ffmpeg command to write the compressed file.)
+TEST(Audio, ChunkedDecodeEqualsOnePass) {
+  if (std::system("ffmpeg -version > /dev/null 2>&1") != 0) GTEST_SKIP() << "no ffmpeg command";
+  auto dir = test::make_temp_dir("chunks");
+  // 200 s ends inside a chunk; 180 s on the chunk grid, where the final chunk is empty.
+  for (int secs : {200, 180}) {
+    std::vector<double> x(std::size_t(8000 * secs));
+    for (std::size_t i = 0; i < x.size(); ++i) x[i] = 0.3 * std::sin(2 * M_PI * 50.01 * double(i) / 8000) + 0.1 * std::sin(0.37 * double(i));
+    audio::write_wav((dir / "a.wav").string(), x, 8000);
+    for (const char* ext : {"flac", "ogg"}) {
+      const auto out = (dir / (std::string("a.") + ext)).string();
+      if (std::system(("ffmpeg -v error -y -i " + (dir / "a.wav").string() + " " + out + " > /dev/null 2>&1").c_str()) != 0) continue;
+      auto one = audio::load_audio(out, 1000, 1), many = audio::load_audio(out, 1000, 4);
+      EXPECT_FALSE(one.chunked);
+      EXPECT_TRUE(many.chunked) << secs << " s " << ext << ": fell back to one pass";
+      ASSERT_EQ(one.samples.size(), many.samples.size()) << secs << " s " << ext;
+      for (std::size_t i = 0; i < one.samples.size(); ++i)
+        ASSERT_NEAR(one.samples[i], many.samples[i], 1e-5) << secs << " s " << ext << " sample " << i;
+    }
+  }
+  fs::remove_all(dir);
+}
+
 class EndToEnd : public ::testing::TestWithParam<const char*> {};
 
 TEST_P(EndToEnd, LocatesGridTimeAndClockError) {

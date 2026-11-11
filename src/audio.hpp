@@ -18,12 +18,14 @@ struct Audio {
   int rate = DEFAULT_ANALYSIS_RATE;
   std::optional<int> source_rate;
   std::string path;
+  bool chunked = false;  // decoded in chunks on several threads (else in one pass)
   double duration() const { return double(samples.size()) / rate; }
 };
 
 // Throws std::runtime_error (decode problems) or std::invalid_argument (missing file).
-// rate <= 0 keeps the file's own sample rate.
-Audio load_audio(const std::string& path, int rate = DEFAULT_ANALYSIS_RATE);
+// rate <= 0 keeps the file's own sample rate. Long compressed files are decoded in
+// chunks on `threads` threads (0: GEOLOC_THREADS or every core; 1: one pass).
+Audio load_audio(const std::string& path, int rate = DEFAULT_ANALYSIS_RATE, int threads = 0);
 void write_wav(const std::string& path, const std::vector<double>& samples, int rate);
 
 struct FileClues {

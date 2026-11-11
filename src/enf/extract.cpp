@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "dsp/filters.hpp"
+#include "util/parallel.hpp"
 
 namespace geo::enf {
 
@@ -563,9 +564,13 @@ std::vector<std::pair<int, double>> ridge_detect(std::span<const double> x, doub
   for (int nom : NOMINALS) {
     const auto& fh = fams[nom];
     if (fh.empty()) continue;
-    double sc = ridge_evidence(S, nom, fh, frame_s, hop_s, n_frames, band_hz, step_hz, max_k);
-    std::vector<double> null;
-    for (double m : nulls) null.push_back(ridge_evidence(S, m, fh, frame_s, hop_s, n_frames, band_hz, step_hz, max_k));
+    // The family's own score and its nulls' are independent: one per thread.
+    std::vector<double> ev(nulls.size() + 1);
+    parallel_for(ev.size(), [&](std::size_t i) {
+      ev[i] = ridge_evidence(S, i ? nulls[i - 1] : double(nom), fh, frame_s, hop_s, n_frames, band_hz, step_hz, max_k);
+    });
+    const double sc = ev[0];
+    std::vector<double> null(ev.begin() + 1, ev.end());
     double mean = std::accumulate(null.begin(), null.end(), 0.0) / double(null.size());
     double var = 0;
     for (double v : null) var += (v - mean) * (v - mean);
