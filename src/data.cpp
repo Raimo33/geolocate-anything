@@ -1,5 +1,6 @@
 // Data files compiled into the binary (#embed), so `geoloc` is one self-contained file.
 #include "data.hpp"
+#include "data_stamp.hpp"  // hashes of the #embed'ed files (see CMakeLists.txt)
 
 namespace geo::data {
 

@@ -40,15 +40,15 @@ else
 fi
 EOF
 COPY CMakeLists.txt /src/
+COPY cmake /src/cmake
 COPY src /src/src
 COPY data /src/data
-# data.cpp #embeds data/: ccache's direct mode doesn't hash #embed files, so it is off
-# (preprocessor mode hashes the expanded bytes).
-ENV CCACHE_DIR=/cache/ccache CCACHE_NODIRECT=1 CCACHE_MAXSIZE=2G CCACHE_COMPILERCHECK=content
+# CMakeLists.txt runs the compiler through ccache (direct mode, PCH-aware); data.cpp
+# includes a hash of the files it #embeds, so cached objects never go stale.
+ENV CCACHE_DIR=/cache/ccache CCACHE_MAXSIZE=2G CCACHE_COMPILERCHECK=content
 RUN --mount=type=cache,id=s/6d3bbf92-2dd3-41d1-b65b-3f33ab5232a7-/cache/ccache,target=/cache/ccache \
     cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/ffmpeg \
-      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-    && cmake --build /build && strip /build/geoloc && ccache -s
+    && cmake --build /build --target geoloc && strip /build/geoloc && ccache -s
 
 # Runtime: the binary (data and dashboard are compiled in) and its shared libraries.
 FROM ubuntu:26.04

@@ -19,12 +19,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            clang-20 ninja-build cmake pkg-config ffmpeg \
+            clang-20 ninja-build cmake pkg-config ccache ffmpeg \
             libboost1.83-dev libcli11-dev libcurl4-openssl-dev libzstd-dev libfftw3-dev libarchive-dev \
             libssl-dev zlib1g-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev libgtest-dev
+      # ccache (CMakeLists.txt uses it when installed): a push recompiles only what changed.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-20
       - name: Build
-        run: cmake --build build
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 500M
+        run: cmake --build build && ccache -s
       - name: Test
         run: build/geoloc_tests

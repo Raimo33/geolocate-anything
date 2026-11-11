@@ -272,6 +272,11 @@ build/geoloc_tests                                     # offline test suite
 On Ubuntu 24.04, whose GCC lacks `#embed`, configure with `-DCMAKE_CXX_COMPILER=clang++-20`
 (see `.github/workflows/ci.yml` for the full package list).
 
+Build speed: the common headers (Asio, JSON, std) are precompiled (`src/pch.hpp`, turn off
+with `-DGEOLOC_PCH=OFF`); Asio's and CLI11's non-template code compiles once, in
+`src/*_impl.cpp`; and ccache is used when installed (`-DGEOLOC_CCACHE=OFF` to skip it), so
+a fresh build directory or a branch switch recompiles only what changed.
+
 ## License
 
 MIT.

@@ -26,6 +26,14 @@ if(EXISTS "${GEOLOC_SYSROOT}/include")
   link_directories("${GEOLOC_SYSROOT}/lib/x86_64-linux-gnu")
 endif()
 
+# ccache when installed (-DGEOLOC_CCACHE=OFF to skip it). Direct mode works with the
+# precompiled header given these sloppiness settings (see the ccache manual).
+option(GEOLOC_CCACHE "Compile through ccache when it is installed" ON)
+find_program(CCACHE_PROGRAM ccache)
+if(GEOLOC_CCACHE AND CCACHE_PROGRAM AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+  set(CMAKE_CXX_COMPILER_LAUNCHER ${CMAKE_COMMAND} -E env CCACHE_SLOPPINESS=pch_defines,time_macros ${CCACHE_PROGRAM})
+endif()
+
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)                      # Nyquist decoding (net/offload.hpp)
 find_package(Boost 1.83 REQUIRED CONFIG)           # header-only: Asio, Beast, JSON
@@ -47,6 +55,12 @@ find_path(ARCHIVE_INCLUDE_DIR archive.h REQUIRED)
 find_path(CLI11_INCLUDE_DIR CLI/CLI.hpp REQUIRED)
 
 set(GEOLOC_WARN -Wall -Wextra -Wno-unused-parameter -Wno-c23-extensions -Wno-missing-field-initializers)
+# GCC false positive with BOOST_ASIO_SEPARATE_COMPILATION: coroutine frames come from
+# Asio's aligned_alloc-backed recycler and go back through free(), which GCC can no
+# longer pair once that code is out of line. Clang (CI) still checks this.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  list(APPEND GEOLOC_WARN -Wno-mismatched-new-delete)
+endif()
 # No -ffast-math: NaN marks missing data everywhere.
 set(GEOLOC_OPT -O3 -march=${GEOLOC_ARCH} -fno-math-errno -fno-trapping-math -fcx-limited-range)
 
@@ -84,31 +98,59 @@ add_library(geoloc_core STATIC
   src/web/server.cpp
   src/data.cpp
   src/json_impl.cpp
+  src/asio_impl.cpp
+  src/cli11_impl.cpp
 )
 target_include_directories(geoloc_core PUBLIC src)
 target_include_directories(geoloc_core SYSTEM PUBLIC ${AV_INCLUDE_DIR} ${ZSTD_INCLUDE_DIR} ${FFTW_INCLUDE_DIR} ${ARCHIVE_INCLUDE_DIR}
                            ${CLI11_INCLUDE_DIR})
 target_compile_options(geoloc_core PRIVATE ${GEOLOC_WARN} ${GEOLOC_OPT})
 target_compile_definitions(geoloc_core PUBLIC
-  BOOST_ASIO_NO_DEPRECATED BOOST_ASIO_DISABLE_THREADS BOOST_JSON_NO_LIB BOOST_BEAST_USE_STD_STRING_VIEW
+  BOOST_ASIO_NO_DEPRECATED BOOST_ASIO_DISABLE_THREADS BOOST_ASIO_SEPARATE_COMPILATION BOOST_JSON_NO_LIB CLI11_COMPILE BOOST_BEAST_USE_STD_STRING_VIEW
   GEOLOC_VERSION="${PROJECT_VERSION}" GEOLOC_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
 target_link_libraries(geoloc_core PUBLIC
   Boost::headers CURL::libcurl ZLIB::ZLIB OpenSSL::Crypto
   ${ZSTD_LIB} ${FFTW_LIB} ${FFTWF_LIB} ${ARCHIVE_LIB}
   ${AVFORMAT_LIB} ${AVCODEC_LIB} ${SWRESAMPLE_LIB} ${AVUTIL_LIB} Threads::Threads m)
-# data.cpp #embeds data/*.json and the dashboard: rebuild when they change.
-set_property(SOURCE src/data.cpp APPEND PROPERTY OBJECT_DEPENDS
-  ${CMAKE_SOURCE_DIR}/data/grids.json ${CMAKE_SOURCE_DIR}/data/grid_areas.json ${CMAKE_SOURCE_DIR}/data/tz_areas.json
-  ${CMAKE_SOURCE_DIR}/data/dashboard.html)
+# data.cpp #embeds data/*.json and the dashboard. It also includes a generated header
+# holding their hashes: Ninja rebuilds it when they change, and ccache (direct mode,
+# which doesn't hash #embed files) sees the change too.
+set(GEOLOC_EMBEDDED ${CMAKE_SOURCE_DIR}/data/grids.json ${CMAKE_SOURCE_DIR}/data/grid_areas.json
+                    ${CMAKE_SOURCE_DIR}/data/tz_areas.json ${CMAKE_SOURCE_DIR}/data/dashboard.html)
+set(GEOLOC_DATA_STAMP ${CMAKE_BINARY_DIR}/gen/data_stamp.hpp)
+add_custom_command(OUTPUT ${GEOLOC_DATA_STAMP}
+  COMMAND ${CMAKE_COMMAND} "-DFILES=${GEOLOC_EMBEDDED}" -DOUT=${GEOLOC_DATA_STAMP} -P ${CMAKE_SOURCE_DIR}/cmake/data_stamp.cmake
+  DEPENDS ${GEOLOC_EMBEDDED} ${CMAKE_SOURCE_DIR}/cmake/data_stamp.cmake VERBATIM)
+target_sources(geoloc_core PRIVATE ${GEOLOC_DATA_STAMP})
+set_property(SOURCE src/data.cpp APPEND PROPERTY INCLUDE_DIRECTORIES ${CMAKE_BINARY_DIR}/gen)
+set_property(SOURCE src/data.cpp APPEND PROPERTY OBJECT_DEPENDS ${GEOLOC_EMBEDDED} ${GEOLOC_DATA_STAMP})
 set_source_files_properties(src/data.cpp PROPERTIES COMPILE_OPTIONS "-Wno-pedantic")
+# Argument parsing runs once per invocation: no need for -O3 there.
+set_source_files_properties(src/cli11_impl.cpp PROPERTIES COMPILE_OPTIONS "-O1")
 # The search's hot loops: reassociation lets reductions and prefix sums vectorise (only
 # summation order changes; NaN handling is kept, no -ffinite-math-only). Not used
 # elsewhere: extraction reproduces numpy's exact arithmetic where results depend on it.
 set_source_files_properties(src/dsp/filters.cpp src/enf/match.cpp PROPERTIES COMPILE_OPTIONS "-fassociative-math;-fno-signed-zeros")
 
+# Precompiled header: Asio, JSON and the common std headers are parsed once per target.
+# The *_impl.cpp files compile the libraries' sources and data.cpp only #embeds: no PCH.
+option(GEOLOC_PCH "Precompile the common headers (src/pch.hpp)" ON)
+if(GEOLOC_PCH)
+  target_precompile_headers(geoloc_core PRIVATE src/pch.hpp)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")  # needed for ccache to cache the PCH's users
+    target_compile_options(geoloc_core PUBLIC -Xclang -fno-pch-timestamp)
+  endif()
+  set_source_files_properties(src/json_impl.cpp src/asio_impl.cpp src/cli11_impl.cpp src/data.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+  # Their extra math flags change predefined macros, which makes GCC reject the PCH.
+  set_source_files_properties(src/dsp/filters.cpp src/enf/match.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
+
 add_executable(geoloc src/main.cpp)
 target_compile_options(geoloc PRIVATE ${GEOLOC_WARN} ${GEOLOC_OPT})
 target_link_libraries(geoloc PRIVATE geoloc_core)
+if(GEOLOC_PCH)
+  target_precompile_headers(geoloc REUSE_FROM geoloc_core)
+endif()
 install(TARGETS geoloc RUNTIME DESTINATION bin)
 
 # The unit tests, when GoogleTest is installed.
@@ -122,7 +164,11 @@ if(GTest_FOUND)
   target_compile_options(geoloc_tests PRIVATE ${GEOLOC_WARN} -O2 -march=${GEOLOC_ARCH})
   target_link_libraries(geoloc_tests PRIVATE geoloc_core GTest::gtest)
   target_compile_definitions(geoloc_tests PRIVATE GEOLOC_BIN="$<TARGET_FILE:geoloc>")
+  if(GEOLOC_PCH)
+    target_precompile_headers(geoloc_tests PRIVATE src/pch.hpp <gtest/gtest.h>)
+  endif()
   add_dependencies(geoloc_tests geoloc)
   include(GoogleTest)
-  gtest_discover_tests(geoloc_tests DISCOVERY_TIMEOUT 60)
+  # Listed when ctest runs, not after every link of the test binary.
+  gtest_discover_tests(geoloc_tests DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 60)
 endif()
