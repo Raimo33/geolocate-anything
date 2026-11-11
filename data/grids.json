@@ -1,0 +1,1030 @@
+{
+  "version": 2,
+  "_about": "Synchronous power grids. All points inside one synchronous area share the same mains-frequency fluctuations, so ENF matching resolves to one of these areas (not to a city). Each grid's extent is a list of dated areas; scripts/build_grid_areas.py turns them into data/grid_areas.json (one feature per area) and checks that grids do not overlap. Corrections welcome: every area carries the source it rests on.",
+  "_schema": {
+    "reference": "\"tracked\": reference data exists in at least one source (refs/sources.py). \"none\": a grid we know is separate but have no reference data for; shown so that its area is not mistaken for a neighbour's.",
+    "areas": "Each area: include and exclude lists, optional from/to (UTC dates, from inclusive, to exclusive; missing = unbounded), status and source. A grid's extent at time t is the union of its areas active at t, each being (union of include) minus (union of exclude).",
+    "area references": "A string is an ISO 3166-1 country or ISO 3166-2 subdivision as Natural Earth 10m admin-1 spells it. {\"island\": name, \"at\": [lon, lat]} is the piece of land containing that point. {\"dataset\": ...} is a named polygon from an external dataset pinned in build_grid_areas.py: eia861_counties (US counties grouped by the interconnection that serves most of their customers, per EIA-861), abs_lga_2024 (Australian local government areas by name), mlit_n03 (a Japanese prefecture's municipalities, split along a river). {\"polygon\": [[lon, lat], ...]} is a hand-drawn outline and {\"circle\": [lon, lat], \"km\": r} a disc around a place, both named by \"name\"; they carve out off-grid places whose edge through empty land is arbitrary. An object's \"iso\" names the country or subdivision it lies in, for the derived country list.",
+    "status": "synchronous: an AC member of a larger interconnected system. dc_linked: its own synchronous area, tied to neighbours only by HVDC. isolated: no ties at all."
+  },
+  "grids": [
+    {
+      "id": "continental_europe",
+      "name": "Continental Europe (ENTSO-E RG CE)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["PT", "ES", "AD", "FR", "MC", "BE", "NL", "LU", "DE", "DK-81", "DK-82", "DK-83", "CH", "LI", "AT", "IT", "SM", "VA", "SI", "HR", "BA", "RS", "XK", "ME", "MK", "AL", "GR", "BG", "RO", "HU", "SK", "CZ", "PL", "MA", "DZ", "TN", "JE"],
+          "exclude": ["ES-PM", "ES-GC", "ES-TF", "ES-CE", "ES-ML", "PT-20", "PT-30", "FR-GF", "FR-MQ", "FR-GP", "FR-RE", "FR-YT", "FR-2A", "FR-2B", {"island": "Sardinia", "at": [9.0, 40.0]}, "GR-M", {"island": "Rhodes", "at": [28.0, 36.2]}, {"island": "Kos", "at": [27.15, 36.85]}, {"island": "Karpathos", "at": [27.15, 35.6]}, {"island": "Lesbos", "at": [26.3, 39.2]}, {"island": "Chios", "at": [26.0, 38.4]}, {"island": "Samos", "at": [26.8, 37.73]}, {"island": "Lemnos", "at": [25.2, 39.9]}, {"island": "Ikaria", "at": [26.15, 37.6]}],
+          "status": "synchronous",
+          "source": "ENTSO-E, Continental Europe synchronous area. Western Denmark (DK-81..83, Jutland and Funen) is CE, eastern Denmark Nordic (Energinet). Morocco is AC-tied to Spain since 1997, Algeria and Tunisia through Morocco. Jersey is fed by AC cables from Normandy (Jersey Electricity). Sardinia and Corsica (HVDC SAPEI, SACOI), the Spanish and Portuguese islands, Ceuta and Melilla are separate."
+        },
+        {
+          "include": ["TR"],
+          "from": "2010-09-18",
+          "status": "synchronous",
+          "source": "ENTSO-E: Turkish system in trial parallel operation with Continental Europe from 2010-09-18, permanent from 2015-04-15."
+        },
+        {
+          "include": ["MT"],
+          "from": "2015-04-09",
+          "status": "synchronous",
+          "source": "Malta-Sicily 220 kV HVAC interconnector (Enemalta), in service April 2015."
+        },
+        {
+          "include": ["GR-M"],
+          "from": "2021-07-01",
+          "status": "synchronous",
+          "source": "IPTO: Crete-Peloponnese 150 kV AC link energised mid-2021 (date approximate to the month); Crete-Attica HVDC added 2025."
+        },
+        {
+          "include": ["UA-21", "UA-26", "UA-46"],
+          "to": "2022-03-16",
+          "status": "synchronous",
+          "source": "Burshtyn TPP island, synchronous with Continental Europe since 2002 (Ukrenergo). Approximated by whole oblasts (Zakarpattia, Ivano-Frankivsk, Lviv); the real island was smaller."
+        },
+        {
+          "include": ["UA", "MD"],
+          "from": "2022-03-16",
+          "status": "synchronous",
+          "source": "ENTSO-E press release 2022-03-16: emergency synchronisation of Ukraine and Moldova with Continental Europe. Crimea is not included (on the Russian system since 2015); occupied parts of other oblasts are not split out."
+        },
+        {
+          "include": ["LT", "LV", "EE"],
+          "from": "2025-02-09",
+          "status": "synchronous",
+          "source": "ENTSO-E / Litgrid / AST / Elering: Baltic states synchronised with Continental Europe on 2025-02-09 (~12:00 UTC), after a day in island mode."
+        }
+      ],
+      "notes": "Not the Balearic and Canary Islands, the Azores, Madeira, Ceuta, Melilla, Sardinia, Corsica or France's overseas departments. Smaller non-interconnected Greek and Italian islands (Pantelleria, Lampedusa, the Aeolian islands, parts of the Dodecanese) are not split out except the large Aegean islands listed. Guernsey (AC-tied via Jersey) is missing because Natural Earth's admin-1 layer only holds Sark, which is isolated."
+    },
+    {
+      "id": "nordic",
+      "name": "Nordic (ENTSO-E RG Nordic)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["NO", "SE", "FI", "DK-84", "DK-85"],
+          "exclude": ["SE-I", "NO-21"],
+          "status": "synchronous",
+          "source": "ENTSO-E RG Nordic: Norway, Sweden, Finland, eastern Denmark (Zealand, Bornholm via AC cable to Sweden). Gotland is fed by HVDC (Vattenfall/Gotlands Energi) and Svalbard is isolated."
+        }
+      ]
+    },
+    {
+      "id": "great_britain",
+      "name": "Great Britain",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["GB-ENG", "GB-SCT", "GB-WLS", "IM"],
+          "exclude": ["GB-ZET"],
+          "status": "dc_linked",
+          "source": "NESO: GB is its own synchronous area, tied to Europe and Ireland only by HVDC. Isle of Man by the 90 kV AC interconnector (Manx Utilities). Orkney and the Western Isles are AC-cabled. Shetland is not (see shetland)."
+        }
+      ]
+    },
+    {
+      "id": "ireland",
+      "name": "Ireland & Northern Ireland",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["IE", "GB-NIR"],
+          "status": "dc_linked",
+          "source": "EirGrid/SONI: all-island synchronous system; HVDC to GB (Moyle, EWIC) and France (Celtic, 2027)."
+        }
+      ]
+    },
+    {
+      "id": "ips_ups",
+      "name": "IPS/UPS (Russia & neighbours)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["RU", "BY", "KZ", "KG", "UZ", "TJ", "GE", "AZ"],
+          "exclude": ["RU-KGD", "RU-AMU", "RU-YEV", "RU-KHA", "RU-PRI", "RU-SA", "RU-KAM", "RU-MAG", "RU-CHU", "RU-SAK", "AZ-NX", "AZ-SAR", "AZ-SAD", "AZ-KAN", "AZ-BAB", "AZ-SAH", "AZ-CUL", "AZ-ORD"],
+          "status": "synchronous",
+          "source": "SO UPS: UES of Russia (IPS Centre, North-West, South, Middle Volga, Urals, Siberia) runs synchronously with Belarus, Kazakhstan, the Central Asian power system and the South Caucasus (Georgia, Azerbaijan). IPS East and the isolated eastern systems are separate. Nakhchivan is fed from Iran and Turkey. Tajikistan was disconnected 2009-2018 (not modelled: no reference data then). Armenia is left out: it is not established whether it runs synchronously with Georgia or with Iran (Armenian ministry, Feb 2026: not synchronised with Iran)."
+        },
+        {
+          "include": ["MN"],
+          "exclude": ["MN-071", "MN-046", "MN-043", "MN-057", "MN-065", "MN-061", "MN-051"],
+          "status": "synchronous",
+          "source": "Mongolia's Central Energy System is AC-tied to Buryatia (Russia). The western, Altai-Uliastai and eastern systems are not; approximated by aimag."
+        },
+        {
+          "include": ["UA", "MD"],
+          "exclude": ["UA-21", "UA-26", "UA-46"],
+          "to": "2022-03-16",
+          "status": "synchronous",
+          "source": "Ukraine and Moldova were part of IPS/UPS until the 2022-02-24 isolation test and the 2022-03-16 synchronisation with Continental Europe (ENTSO-E)."
+        },
+        {
+          "include": ["LT", "LV", "EE", "RU-KGD"],
+          "to": "2025-02-08",
+          "status": "synchronous",
+          "source": "BRELL ring: the Baltic states and Kaliningrad left IPS/UPS on 2025-02-08 (~07:00 UTC) (Litgrid, Elering, AST)."
+        }
+      ],
+      "notes": "Includes Crimea (on the Russian system since 2015). The Baltic states until 2025-02-08, Ukraine and Moldova until 2022-03-16. Membership of Central Asian systems changes over time."
+    },
+    {
+      "id": "baltic_island_2025",
+      "name": "Baltic states in island mode (2025-02-08)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["LT", "LV", "EE"],
+          "from": "2025-02-08",
+          "to": "2025-02-09",
+          "status": "isolated",
+          "source": "Elering/Litgrid/AST: isolated operation between leaving BRELL and joining Continental Europe, about 29 h (07:09 UTC on 2025-02-08 to 12:05 UTC on 2025-02-09, as KIT's Kaunas and Tallinn recorders show). Dated by whole days, so 2025-02-09 counts as Continental Europe."
+        }
+      ]
+    },
+    {
+      "id": "kaliningrad",
+      "name": "Kaliningrad",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["RU-KGD"],
+          "from": "2025-02-08",
+          "status": "isolated",
+          "source": "SO UPS: Kaliningrad power system in isolated operation since the Baltic states left BRELL on 2025-02-08."
+        }
+      ]
+    },
+    {
+      "id": "russia_far_east",
+      "name": "Russia IPS East",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["RU-AMU", "RU-YEV", "RU-KHA", "RU-PRI", "RU-SA"],
+          "status": "isolated",
+          "source": "SO UPS: IPS East (Amur, Jewish AO, Khabarovsk, Primorye, southern and central Yakutia) operates separately from IPS Siberia. Yakutia is approximated as a whole; its northern districts are isolated."
+        }
+      ]
+    },
+    {
+      "id": "russia_isolated_east",
+      "name": "Russian Far East isolated systems",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["RU-KAM", "RU-MAG", "RU-CHU", "RU-SAK"],
+          "status": "isolated",
+          "source": "SO UPS: technologically isolated power systems of Kamchatka, Magadan, Chukotka and Sakhalin. Each runs on its own; grouped here for display."
+        }
+      ]
+    },
+    {
+      "id": "sardinia_corsica",
+      "name": "Sardinia & Corsica",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"island": "Sardinia", "at": [9.0, 40.0], "iso": "IT"}, "FR-2A", "FR-2B"],
+          "status": "dc_linked",
+          "source": "Sardinia reaches the Italian mainland only over HVDC (SAPEI, SACOI; Terna) and Corsica only over SACOI and the SARCO AC cable to Sardinia (Wikipedia: HVDC Italy-Corsica-Sardinia), so the two islands form one AC system of their own."
+        }
+      ]
+    },
+    {
+      "id": "crete",
+      "name": "Crete",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["GR-M"],
+          "to": "2021-07-01",
+          "status": "isolated",
+          "source": "HEDNO: Crete was a non-interconnected island system until the 2021 AC link to the Peloponnese."
+        }
+      ]
+    },
+    {
+      "id": "aegean_islands",
+      "name": "Aegean non-interconnected islands",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"island": "Rhodes", "at": [28.0, 36.2], "iso": "GR"}, {"island": "Kos", "at": [27.15, 36.85], "iso": "GR"}, {"island": "Karpathos", "at": [27.15, 35.6], "iso": "GR"}, {"island": "Lesbos", "at": [26.3, 39.2], "iso": "GR"}, {"island": "Chios", "at": [26.0, 38.4], "iso": "GR"}, {"island": "Samos", "at": [26.8, 37.73], "iso": "GR"}, {"island": "Lemnos", "at": [25.2, 39.9], "iso": "GR"}, {"island": "Ikaria", "at": [26.15, 37.6], "iso": "GR"}],
+          "status": "isolated",
+          "source": "HEDNO non-interconnected islands (NII): the Dodecanese and North Aegean islands run their own systems; each island (or small cluster) is separate, grouped here for display."
+        }
+      ]
+    },
+    {
+      "id": "cyprus",
+      "name": "Cyprus",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["CY", {"island": "Cyprus (north)", "at": [33.6, 35.3], "iso": "CY"}],
+          "status": "isolated",
+          "source": "TSO Cyprus: isolated island system (Great Sea Interconnector not in service). The north (KIB-TEK) is tied to the south's grid."
+        }
+      ]
+    },
+    {
+      "id": "malta_isolated",
+      "name": "Malta (before the Sicily link)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["MT"],
+          "to": "2015-04-09",
+          "status": "isolated",
+          "source": "Enemalta: isolated until the Malta-Sicily interconnector (April 2015)."
+        }
+      ]
+    },
+    {
+      "id": "gotland",
+      "name": "Gotland",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["SE-I"],
+          "status": "dc_linked",
+          "source": "Gotland is fed from the Swedish mainland by the Gotland HVDC links (ABB/Vattenfall)."
+        }
+      ]
+    },
+    {
+      "id": "shetland",
+      "name": "Shetland",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["GB-ZET"],
+          "to": "2024-08-01",
+          "status": "isolated",
+          "source": "SSEN: Shetland was an isolated system (Lerwick power station) until the Shetland HVDC link."
+        },
+        {
+          "include": ["GB-ZET"],
+          "from": "2024-08-01",
+          "status": "dc_linked",
+          "source": "SSEN Transmission: Shetland HVDC link to Caithness energised August 2024 (date approximate to the month)."
+        }
+      ]
+    },
+    {
+      "id": "balearic",
+      "name": "Balearic Islands (Mallorca, Menorca, Ibiza)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": [{"island": "Mallorca", "at": [2.95, 39.6], "iso": "ES-PM"}, {"island": "Menorca", "at": [4.1, 39.95], "iso": "ES-PM"}],
+          "status": "dc_linked",
+          "source": "REE: Mallorca-Menorca AC cable; Mallorca tied to the Peninsula by the Romulo HVDC link (2012). KIT's Mallorca recorder correlates r = 0.09 with Karlsruhe."
+        },
+        {
+          "include": [{"island": "Ibiza", "at": [1.4, 38.98], "iso": "ES-PM"}, {"island": "Formentera", "at": [1.47, 38.7], "iso": "ES-PM"}],
+          "from": "2016-01-01",
+          "status": "dc_linked",
+          "source": "REE: Mallorca-Ibiza 132 kV AC link in service 2016 (date approximate to the year); Ibiza-Formentera AC cables."
+        }
+      ]
+    },
+    {
+      "id": "ibiza_formentera",
+      "name": "Ibiza & Formentera (before the Mallorca link)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"island": "Ibiza", "at": [1.4, 38.98], "iso": "ES-PM"}, {"island": "Formentera", "at": [1.47, 38.7], "iso": "ES-PM"}],
+          "to": "2016-01-01",
+          "status": "isolated",
+          "source": "REE: Ibiza-Formentera ran on their own until the 2016 Mallorca-Ibiza link."
+        }
+      ]
+    },
+    {
+      "id": "gran_canaria",
+      "name": "Gran Canaria (island grid)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": [{"island": "Gran Canaria", "at": [-15.6, 27.95], "iso": "ES-GC"}],
+          "status": "isolated",
+          "source": "REE: each Canary island is its own system except Lanzarote-Fuerteventura (AC-cabled)."
+        }
+      ]
+    },
+    {
+      "id": "canary_islands_other",
+      "name": "Other Canary Islands",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"island": "Tenerife", "at": [-16.6, 28.27], "iso": "ES-TF"}, {"island": "La Gomera", "at": [-17.23, 28.1], "iso": "ES-TF"}, {"island": "La Palma", "at": [-17.85, 28.68], "iso": "ES-TF"}, {"island": "El Hierro", "at": [-18.0, 27.75], "iso": "ES-TF"}, {"island": "Lanzarote", "at": [-13.65, 29.03], "iso": "ES-GC"}, {"island": "Fuerteventura", "at": [-14.0, 28.4], "iso": "ES-GC"}],
+          "status": "isolated",
+          "source": "REE: separate island systems (Lanzarote-Fuerteventura are one; Tenerife-La Gomera link under construction). Grouped here for display."
+        }
+      ]
+    },
+    {
+      "id": "azores_madeira",
+      "name": "Azores & Madeira",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["PT-20", "PT-30"],
+          "status": "isolated",
+          "source": "EDA (Azores) and EEM (Madeira): every inhabited island runs its own system. Grouped here for display."
+        }
+      ]
+    },
+    {
+      "id": "ceuta_melilla",
+      "name": "Ceuta & Melilla",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["ES-CE", "ES-ML"],
+          "status": "isolated",
+          "source": "REE: Ceuta and Melilla are isolated systems with their own power stations. The Peninsula-Ceuta link has been under construction since 2024; update when it enters service."
+        }
+      ]
+    },
+    {
+      "id": "faroe",
+      "name": "Faroe Islands (main grid)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["FO"],
+          "exclude": [{"island": "Suðuroy", "at": [-6.8, 61.53]}, {"island": "Mykines", "at": [-7.65, 62.1]}, {"island": "Fugloy", "at": [-6.32, 62.33]}, {"island": "Skúvoy", "at": [-6.81, 61.77]}, {"island": "Stóra Dímun", "at": [-6.75, 61.69]}],
+          "status": "isolated",
+          "source": "SEV: the central grid covers Streymoy, Eysturoy, Vágar, Sandoy and the northern islands. Suðuroy has its own grid (cable planned), and Fugloy, Mykines, Skúvoy and Stóra Dímun are not connected."
+        }
+      ]
+    },
+    {
+      "id": "faroe_other",
+      "name": "Faroe Islands (Suðuroy and small islands)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"island": "Suðuroy", "at": [-6.8, 61.53], "iso": "FO"}, {"island": "Mykines", "at": [-7.65, 62.1], "iso": "FO"}, {"island": "Fugloy", "at": [-6.32, 62.33], "iso": "FO"}, {"island": "Skúvoy", "at": [-6.81, 61.77], "iso": "FO"}, {"island": "Stóra Dímun", "at": [-6.75, 61.69], "iso": "FO"}],
+          "status": "isolated",
+          "source": "SEV: separate island grids. Grouped here for display."
+        }
+      ]
+    },
+    {
+      "id": "iceland",
+      "name": "Iceland",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["IS"],
+          "status": "isolated",
+          "source": "Landsnet: national grid with no external interconnection."
+        }
+      ]
+    },
+    {
+      "id": "us_eastern",
+      "name": "North America Eastern Interconnection",
+      "nominal_hz": 60,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": [{"dataset": "eia861_counties", "interconnection": "us_eastern", "iso": "US"}, "CA-ON", "CA-MB", "CA-SK", "CA-NB", "CA-NS", "CA-PE"],
+          "exclude": [
+            {"circle": [-87.666, 56.019], "km": 15, "name": "Fort Severn"},
+            {"circle": [-85.424, 55.011], "km": 15, "name": "Peawanuck"},
+            {"circle": [-87.378, 52.984], "km": 15, "name": "Webequie"},
+            {"circle": [-88.542, 52.708], "km": 15, "name": "Nibinamik (Summer Beaver)"},
+            {"circle": [-88.019, 52.203], "km": 15, "name": "Neskantaga"},
+            {"circle": [-87.905, 51.557], "km": 15, "name": "Eabametoong (Fort Hope)"},
+            {"circle": [-85.909, 51.655], "km": 15, "name": "Marten Falls"},
+            {"circle": [-92.75, 52.207], "km": 15, "name": "McDowell Lake"},
+            {"circle": [-89.04, 50.305], "km": 15, "name": "Armstrong and Whitesand"},
+            {"circle": [-89.447, 50.295], "km": 15, "name": "Collins (Namaygoosisagagun)"},
+            {"circle": [-89.12, 49.81], "km": 15, "name": "Gull Bay (Kiashke Zaaging Anishinaabek)"},
+            {"circle": [-82.103, 47.3], "km": 15, "name": "Biscotasing"},
+            {"circle": [-82.757, 47.594], "km": 15, "name": "Sultan"},
+            {"circle": [-84.104, 49.058], "km": 15, "name": "Oba"},
+            {"circle": [-85.548, 49.451], "km": 15, "name": "Hillsport"},
+            {"circle": [-101.671, 57.881], "km": 15, "name": "Brochet"},
+            {"circle": [-101.487, 58.618], "km": 15, "name": "Lac Brochet"},
+            {"circle": [-98.486, 58.719], "km": 15, "name": "Tadoule Lake"},
+            {"circle": [-92.09, 55.861], "km": 15, "name": "Shamattawa"},
+            {"circle": [-102.021, 57.081], "km": 15, "name": "Kinoosao"}
+          ],
+          "status": "synchronous",
+          "source": "NERC: Eastern Interconnection. US counties where most customers are served by Eastern balancing authorities (EIA-861 2024 service territories, customers and BA codes), Canadian provinces east of Alberta except Québec. Cut out (15 km discs): communities still on their own diesel plants. Ontario: the nine First Nations still on diesel (Canadian Press 2025-12), i.e. the four the 2017 Long-Term Energy Plan found not economic to connect (Fort Severn, Weenusk/Peawanuck, Whitesand, Gull Bay/Kiashke Zaaging Anishinaabek) and the five Matawa communities Ontario pledged to connect in 2024 (Webequie, Nibinamik, Neskantaga, Eabametoong, Marten Falls); McDowell Lake, the one Wataynikaneyap community not yet connected (Muskrat Dam was, 2026-04); and the rest of Hydro One Remote Communities' diesel systems (2022 rate application EB-2021-0034, less the communities Wataynikaneyap has connected since): Armstrong with Collins, Biscotasing, Hillsport, Oba and Sultan. Manitoba: Manitoba Hydro's four remote diesel stations (Brochet, Lac Brochet, Shamattawa, Tadoule Lake). Saskatchewan: Kinoosao, SaskPower's last diesel community. Northern Saskatchewan's own grid is tied to the south through Manitoba, so it stays in."
+        }
+      ]
+    },
+    {
+      "id": "us_western",
+      "name": "North America Western Interconnection",
+      "nominal_hz": 60,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": [{"dataset": "eia861_counties", "interconnection": "us_western", "iso": "US"}, "CA-BC", "CA-AB", "MX-BCN"],
+          "status": "synchronous",
+          "source": "WECC: Western Interconnection. US counties where most customers are served by WECC balancing authorities (EIA-861 2024; El Paso Electric included), plus BC, Alberta and northern Baja California (CENACE BC system)."
+        }
+      ]
+    },
+    {
+      "id": "ercot",
+      "name": "ERCOT (Texas)",
+      "nominal_hz": 60,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": [{"dataset": "eia861_counties", "interconnection": "ercot", "iso": "US-TX"}],
+          "status": "dc_linked",
+          "source": "ERCOT: own interconnection, tied to the Eastern Interconnection and Mexico by DC ties. Texas counties where most customers are served in the ERCOT BA (EIA-861 2024), which leaves out El Paso, the Panhandle and parts of east Texas. Lubbock moved into ERCOT in 2021 (county-level, from the 2024 data, not dated)."
+        }
+      ]
+    },
+    {
+      "id": "quebec",
+      "name": "Québec Interconnection",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["CA-QC", "CA-NL"],
+          "exclude": [
+            {"island": "Newfoundland", "at": [-55.5, 48.7]},
+            {"polygon": [[-80, 55], [-80, 63.5], [-50, 63.5], [-50, 49.5], [-61.55, 49.5], [-61.55, 52.2], [-58.8, 52.2], [-58.8, 53.2], [-59.6, 53.95], [-61, 55], [-80, 55]], "name": "Nunavik, northern and coastal Labrador, Lower North Shore"},
+            {"island": "Anticosti", "at": [-63.0, 49.5]},
+            {"polygon": [[-62.3, 47.1], [-62.3, 47.8], [-61.3, 47.8], [-61.3, 47.1], [-62.3, 47.1]], "name": "Îles-de-la-Madeleine"},
+            {"circle": [-66.821, 54.801], "km": 15, "name": "Schefferville and Matimekush"},
+            {"circle": [-74.941, 48.656], "km": 15, "name": "Obedjiwan"},
+            {"circle": [-75.36, 48.109], "km": 15, "name": "Clova"}
+          ],
+          "status": "dc_linked",
+          "source": "NERC: Québec Interconnection, tied to its neighbours by HVDC and back-to-back converters. Labrador's Churchill Falls system feeds it over 735 kV AC, as far as Labrador City and Happy Valley-Goose Bay. Cut out: Hydro-Québec's off-grid systems (Québec government list of municipalities served by autonomous networks): Nunavik, all of Québec north of 55°N (diesel in every village, Kuujjuarapik to Kuujjuaq); the Lower North Shore from Kegaska to Blanc-Sablon (Lac-Robertson system, not tied to the main grid; Natashquan, on the main grid, stays in); Anticosti; Îles-de-la-Madeleine (diesel; the cable to the main grid was suspended in 2025); Schefferville, Matimekush and Kawawachikamach (Menihek); Obedjiwan and Clova (Haute-Mauricie). Labrador: Newfoundland and Labrador Hydro's coastal diesel systems, Rigolet to Nain on the north coast and Cartwright to Mary's Harbour in the south-east, and the L'Anse au Loup system (L'Anse-au-Clair to Red Bay), fed from Hydro-Québec's Lac-Robertson system (NL Hydro 2014 diesel plant registration: the Hydro-Québec tie carries about 96% of its energy). The northern box also takes in Labrador north of 55°N, where every community is off-grid."
+        }
+      ]
+    },
+    {
+      "id": "newfoundland",
+      "name": "Island of Newfoundland",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"island": "Newfoundland", "at": [-55.5, 48.7], "iso": "CA-NL"}],
+          "to": "2017-12-01",
+          "status": "isolated",
+          "source": "Newfoundland and Labrador Hydro: isolated island system before the Maritime Link."
+        },
+        {
+          "include": [{"island": "Newfoundland", "at": [-55.5, 48.7], "iso": "CA-NL"}],
+          "from": "2017-12-01",
+          "status": "dc_linked",
+          "source": "Emera: Maritime Link HVDC to Nova Scotia (Dec 2017); Labrador-Island Link HVDC (2018)."
+        }
+      ]
+    },
+    {
+      "id": "alaska_railbelt",
+      "name": "Alaska Railbelt",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"dataset": "eia861_counties", "interconnection": "alaska_railbelt", "iso": "US-AK"}],
+          "status": "isolated",
+          "source": "Alaska Railbelt grid (Anchorage to Fairbanks), not tied to any other system. Boroughs served by the Railbelt balancing authorities (Chugach, Anchorage ML&P) per EIA-861 2024."
+        }
+      ]
+    },
+    {
+      "id": "hawaii",
+      "name": "Hawaiian island grids",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["US-HI"],
+          "status": "isolated",
+          "source": "Hawaiian Electric: Oʻahu, Maui, Molokaʻi, Lānaʻi and Hawaiʻi Island each run a separate grid (Kauaʻi: KIUC). Grouped here for display."
+        }
+      ]
+    },
+    {
+      "id": "mexico_sin",
+      "name": "Mexico National Interconnected System (SIN)",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["MX"],
+          "exclude": ["MX-BCN", "MX-BCS"],
+          "status": "dc_linked",
+          "source": "CENACE: the SIN is its own synchronous system; ties to ERCOT are DC back-to-back. Baja California is part of WECC, Baja California Sur is isolated."
+        }
+      ]
+    },
+    {
+      "id": "brazil_sin",
+      "name": "Brazil (Sistema Interligado Nacional)",
+      "nominal_hz": 60,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["BR"],
+          "exclude": ["BR-AC", "BR-RO", "BR-AM", "BR-AP", "BR-RR"],
+          "status": "dc_linked",
+          "source": "ONS: the SIN joins the South, Southeast/Centre-West, Northeast and North subsystems in one 60 Hz synchronous area. Paraguay's half of Itaipu (50 Hz) and the ties to Argentina and Uruguay are HVDC or back-to-back converters. Small isolated systems inside the included states (remote towns in Pará, Mato Grosso and elsewhere) are not split out. Reference data exists for 2004-02..2008-08 only."
+        },
+        {
+          "include": ["BR-AC", "BR-RO"],
+          "from": "2009-10-01",
+          "status": "synchronous",
+          "source": "ONS: the Acre-Rondônia system joined the SIN in October 2009 (230 kV from Mato Grosso). The month is taken from ONS's history; the day is nominal."
+        },
+        {
+          "include": ["BR-AM"],
+          "from": "2013-07-01",
+          "status": "synchronous",
+          "source": "ONS: Manaus joined the SIN in July 2013 over the Tucuruí-Macapá-Manaus line. Only Manaus and the towns along the line are connected; the interior of Amazonas remains on isolated systems (not split out). The day is nominal."
+        },
+        {
+          "include": ["BR-AP"],
+          "from": "2015-01-01",
+          "status": "synchronous",
+          "source": "ONS: Macapá joined the SIN in 2015 over the same line. The date is nominal (no reference data for these years)."
+        },
+        {
+          "include": ["BR-RR"],
+          "from": "2025-09-01",
+          "status": "synchronous",
+          "source": "ONS: Boa Vista was connected by the Manaus-Boa Vista 500 kV line in September 2025; until then Roraima ran isolated (and on imports from Venezuela until 2019). The day is nominal."
+        }
+      ],
+      "notes": "Reference data (seismic_brazil) comes from one recorder in the Southeast and covers 2004-02..2008-08."
+    },
+    {
+      "id": "japan_east",
+      "name": "Japan East (50 Hz)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["JP-02", "JP-03", "JP-04", "JP-05", "JP-06", "JP-07", "JP-08", "JP-09", "JP-10", "JP-11", "JP-12", "JP-13", "JP-14", "JP-19", {"dataset": "mlit_n03", "prefecture": "15", "side": "east", "of": "hime_river", "iso": "JP-15"}, {"dataset": "mlit_n03", "prefecture": "22", "side": "east", "of": "fuji_river", "iso": "JP-22"}],
+          "exclude": [{"island": "Sado", "at": [138.4, 38.05]}],
+          "status": "dc_linked",
+          "source": "OCCTO: Tohoku and TEPCO areas at 50 Hz, tied to the 60 Hz west only by frequency converters (Sakuma, Shin-Shinano, Higashi-Shimizu, Hida-Shinano) and to Hokkaido by HVDC. The boundary follows the Fuji river in Shizuoka and the Itoigawa area in Niigata (here the Hime river: Itoigawa west of it is Hokuriku, 60 Hz). Tokyo's Izu and Ogasawara islands and Sado (isolated) are not split out except Sado."
+        }
+      ]
+    },
+    {
+      "id": "japan_west",
+      "name": "Japan West (60 Hz)",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["JP-16", "JP-17", "JP-18", "JP-20", "JP-21", "JP-23", "JP-24", "JP-25", "JP-26", "JP-27", "JP-28", "JP-29", "JP-30", "JP-31", "JP-32", "JP-33", "JP-34", "JP-35", "JP-36", "JP-37", "JP-38", "JP-39", "JP-40", "JP-41", "JP-42", "JP-43", "JP-44", "JP-45", "JP-46", {"dataset": "mlit_n03", "prefecture": "15", "side": "west", "of": "hime_river", "iso": "JP-15"}, {"dataset": "mlit_n03", "prefecture": "22", "side": "west", "of": "fuji_river", "iso": "JP-22"}],
+          "status": "synchronous",
+          "source": "OCCTO: Chubu, Hokuriku, Kansai, Chugoku, Shikoku and Kyushu areas at 60 Hz, AC-interconnected. Kyushu's outer islands (Tsushima, Iki, Goto, Amami) are isolated and not split out."
+        }
+      ]
+    },
+    {
+      "id": "hokkaido",
+      "name": "Hokkaido",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["JP-01"],
+          "status": "dc_linked",
+          "source": "Hokkaido Electric: tied to Honshu only by the Hokkaido-Honshu HVDC links."
+        }
+      ]
+    },
+    {
+      "id": "okinawa",
+      "name": "Okinawa",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["JP-47"],
+          "status": "isolated",
+          "source": "Okinawa Electric: the main island grid and the outer islands' systems are not interconnected with the mainland."
+        }
+      ]
+    },
+    {
+      "id": "japan_islands_isolated",
+      "name": "Sado (isolated)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"island": "Sado", "at": [138.4, 38.05], "iso": "JP-15"}],
+          "status": "isolated",
+          "source": "Tohoku Electric: Sado island runs on its own power stations."
+        }
+      ]
+    },
+    {
+      "id": "india",
+      "name": "India National Grid",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["IN", "BT", "NP"],
+          "exclude": ["IN-AN", "IN-LD", "IN-AP", "IN-TG", "IN-KA", "IN-KL", "IN-TN", "IN-PY"],
+          "status": "synchronous",
+          "source": "Grid-India: NEW grid (north, east, west, north-east). Bhutan is AC-tied. Nepal's INPS runs synchronously with India over the Dhalkebar-Muzaffarpur and other AC ties (NEA). Andaman and Nicobar and Lakshadweep are isolated."
+        },
+        {
+          "include": ["IN-AP", "IN-TG", "IN-KA", "IN-KL", "IN-TN", "IN-PY"],
+          "from": "2013-12-31",
+          "status": "synchronous",
+          "source": "Grid-India (POSOCO): Southern Region synchronised with the NEW grid on 2013-12-31 (Raichur-Sholapur 765 kV), forming one national grid."
+        }
+      ]
+    },
+    {
+      "id": "india_south",
+      "name": "India Southern Region (before 2014)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["IN-AP", "IN-TG", "IN-KA", "IN-KL", "IN-TN", "IN-PY"],
+          "to": "2013-12-31",
+          "status": "dc_linked",
+          "source": "POSOCO: the Southern Region ran asynchronously from the NEW grid (HVDC Talcher-Kolar, Gazuwaka and Chandrapur back-to-backs) until 2013-12-31."
+        }
+      ]
+    },
+    {
+      "id": "china_north_central",
+      "name": "China North & Central (State Grid)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["CN-BJ", "CN-TJ", "CN-HE", "CN-SX", "CN-SD", "CN-HA", "CN-HB", "CN-HN", "CN-JX"],
+          "status": "dc_linked",
+          "source": "State Grid: the North China grid (Beijing, Tianjin, Hebei, Shanxi, Shandong, western Inner Mongolia) and the Central China grid (Henan, Hubei, Hunan, Jiangxi) run synchronously over the 1000 kV Changzhi-Nanyang-Jingmen line (2009-01) and its successors; every tie to the other Chinese grids is HVDC. Before 2009 the membership changed several times (Northeast synchronous with North China 2001-05..2008-11; not modelled: no reference data then)."
+        },
+        {
+          "include": ["CN-NM"],
+          "exclude": [{"polygon": [[117.0, 35], [117.0, 42.1], [116.75, 42.5], [116.4, 43.0], [116.6, 43.6], [117.3, 44.0], [118.3, 44.2], [119.0, 44.7], [119.5, 45.2], [119.3, 45.6], [119.9, 46.0], [120.0, 46.7], [119.75, 46.9], [90, 46.9], [90, 56], [135, 56], [135, 35], [117.0, 35]], "name": "Inner Mongolia east of the Xilingol League's eastern boundary"}],
+          "status": "dc_linked",
+          "source": "Inner Mongolia Power (Mengxi grid) is AC-tied to North China. The line between western Inner Mongolia (Mengxi grid, synchronous with North China) and eastern Inner Mongolia (Hulunbuir, Hinggan, Tongliao, Chifeng: Northeast grid) is hand-drawn along the Xilingol League's eastern boundary, good to about 30 km."
+        },
+        {
+          "include": ["CN-SC", "CN-CQ"],
+          "to": "2019-07-01",
+          "status": "dc_linked",
+          "source": "Sichuan and Chongqing were part of the Central China synchronous grid until the Chongqing-Hubei (Yu-E) back-to-back converter stations made the tie asynchronous. The stations were commissioned in the first half of 2019 (southern station trial run 2019-02); the split is dated 2019-07-01 here, good to a few months."
+        },
+        {
+          "include": ["CN-XZ"],
+          "from": "2018-11-23",
+          "to": "2019-07-01",
+          "status": "dc_linked",
+          "source": "Central Tibet interconnection project (in service 2018-11-23): the central Tibet grid became AC-tied to Sichuan, then still part of the Central China synchronous grid. Ngari joined in 2020-12 (not split out)."
+        }
+      ],
+      "notes": "Reference data comes from sensors in Beijing, Hebei, Tianjin, Shandong, Hubei and western Inner Mongolia."
+    },
+    {
+      "id": "china_east",
+      "name": "China East (State Grid)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["CN-SH", "CN-JS", "CN-ZJ", "CN-AH", "CN-FJ"],
+          "status": "dc_linked",
+          "source": "State Grid East China grid (Shanghai, Jiangsu, Zhejiang, Anhui, Fujian): its own synchronous area, tied to the other Chinese grids by HVDC only (Gezhouba-Shanghai 1989 and the later UHVDC lines)."
+        }
+      ]
+    },
+    {
+      "id": "china_northeast",
+      "name": "China Northeast (State Grid)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["CN-LN", "CN-JL", "CN-HL"],
+          "status": "dc_linked",
+          "source": "State Grid Northeast China grid (Liaoning, Jilin, Heilongjiang, eastern Inner Mongolia): asynchronous since the Gaoling back-to-back station replaced the AC tie to North China in 2008-11. Tied to Russia's IPS East only by the Heihe back-to-back station."
+        },
+        {
+          "include": ["CN-NM"],
+          "exclude": [{"polygon": [[117.0, 35], [117.0, 42.1], [116.75, 42.5], [116.4, 43.0], [116.6, 43.6], [117.3, 44.0], [118.3, 44.2], [119.0, 44.7], [119.5, 45.2], [119.3, 45.6], [119.9, 46.0], [120.0, 46.7], [119.75, 46.9], [90, 46.9], [90, 35], [117.0, 35]], "name": "Inner Mongolia west of the Xilingol League's eastern boundary"}],
+          "status": "dc_linked",
+          "source": "Eastern Inner Mongolia (Hulunbuir, Hinggan, Tongliao, Chifeng) belongs to the Northeast grid. The line between western Inner Mongolia (Mengxi grid, synchronous with North China) and eastern Inner Mongolia (Hulunbuir, Hinggan, Tongliao, Chifeng: Northeast grid) is hand-drawn along the Xilingol League's eastern boundary, good to about 30 km."
+        }
+      ]
+    },
+    {
+      "id": "china_northwest",
+      "name": "China Northwest (State Grid)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["CN-SN", "CN-GS", "CN-QH", "CN-NX", "CN-XJ"],
+          "status": "dc_linked",
+          "source": "State Grid Northwest China grid (Shaanxi, Gansu, Qinghai, Ningxia; Xinjiang since the 750 kV tie of 2010-11): 750 kV AC backbone, tied to the other Chinese grids by HVDC only (Lingbao back-to-back 2005 and the later UHVDC lines). Xinjiang before 2010-11 is not split out."
+        }
+      ]
+    },
+    {
+      "id": "china_southwest",
+      "name": "China Southwest (Sichuan, Chongqing, Tibet)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["CN-SC", "CN-CQ", "CN-XZ"],
+          "from": "2019-07-01",
+          "status": "dc_linked",
+          "source": "State Grid Southwest China grid: Sichuan, Chongqing and Tibet, asynchronous from Central China since the Chongqing-Hubei (Yu-E) back-to-back stations (first half of 2019; dated 2019-07-01 here, good to a few months)."
+        }
+      ]
+    },
+    {
+      "id": "tibet_central",
+      "name": "Central Tibet (before the Sichuan tie)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["CN-XZ"],
+          "to": "2018-11-23",
+          "status": "dc_linked",
+          "source": "The central Tibet grid was isolated, then fed from Qinghai by the Qinghai-Tibet HVDC line (2011-12), until the Central Tibet interconnection project tied it to Sichuan by AC on 2018-11-23. Chamdo (AC-tied to Sichuan since 2014-11) and Ngari (isolated until 2020-12) are not split out."
+        }
+      ]
+    },
+    {
+      "id": "china_southern",
+      "name": "China Southern Power Grid (with Hong Kong & Macau)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["CN-GD", "CN-GX", "CN-GZ", "HK", "MO"],
+          "status": "dc_linked",
+          "source": "China Southern Power Grid: Guangdong, Guangxi and Guizhou form one synchronous area. Hong Kong (CLP's 400 kV ties to Guangdong; HK Electric is AC-tied to CLP) and Macau (220 kV ties to Zhuhai) run synchronously with it. Ties to the State Grid areas are HVDC."
+        },
+        {
+          "include": ["CN-HI"],
+          "from": "2009-06-30",
+          "status": "dc_linked",
+          "source": "Hainan has been AC-tied to Guangdong by the 500 kV submarine cable since 2009-06-30; an island grid before."
+        },
+        {
+          "include": ["CN-YN"],
+          "to": "2016-07-01",
+          "status": "dc_linked",
+          "source": "Yunnan was part of the Southern synchronous area until the Luxi back-to-back station made the tie asynchronous (station in service 2016-06-30)."
+        }
+      ],
+      "notes": "Reference data comes from sensors in Hong Kong and Guangdong."
+    },
+    {
+      "id": "hainan_isolated",
+      "name": "Hainan (before the Guangdong cable)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["CN-HI"],
+          "to": "2009-06-30",
+          "status": "isolated",
+          "source": "Hainan was an island grid until the 500 kV submarine cable to Guangdong entered service on 2009-06-30."
+        }
+      ]
+    },
+    {
+      "id": "yunnan",
+      "name": "Yunnan (asynchronous from the Southern grid)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["CN-YN"],
+          "from": "2016-07-01",
+          "status": "dc_linked",
+          "source": "China Southern Power Grid: since the Luxi back-to-back station (2016-06-30) Yunnan is its own synchronous area, tied to Guangdong and Guangxi by HVDC only."
+        }
+      ]
+    },
+    {
+      "id": "taiwan",
+      "name": "Taiwan",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["TW"],
+          "exclude": ["TW-KIN", "TW-PEN"],
+          "status": "isolated",
+          "source": "Taipower: one island grid at 60 Hz with no external interconnection. Kinmen and Penghu (an island grid until its cable to Taiwan, around 2021) are cut out; Matsu is too small for the base map."
+        }
+      ]
+    },
+    {
+      "id": "australia_nem",
+      "name": "Australia NEM (east & south)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["AU-NSW", "AU-ACT", "AU-VIC", "AU-SA", "AU-X02~", {"dataset": "abs_lga_2024", "state": "Queensland", "except": ["Mount Isa", "Cloncurry", "Torres", "Torres Strait Island", "Northern Peninsula Area", "Mornington", "Doomadgee", "Burke", "Aurukun", "Kowanyama", "Pormpuraaw", "Lockhart River", "Weipa", "Napranum", "Mapoon", "Diamantina", "Boulia"], "iso": "AU-QLD"}],
+          "exclude": [{"island": "Lord Howe Island", "at": [159.08, -31.55]}],
+          "status": "synchronous",
+          "source": "AEMO: mainland NEM (Queensland, NSW, ACT, Victoria, South Australia). Queensland's north-west (Mount Isa) system and Ergon's isolated systems (Torres Strait, Cape York and Gulf communities, Channel Country) are left out by local government area. Lord Howe Island is isolated."
+        }
+      ]
+    },
+    {
+      "id": "australia_tas",
+      "name": "Tasmania (NEM, DC-linked)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["AU-TAS"],
+          "exclude": [{"island": "King Island", "at": [143.98, -39.87]}, {"island": "Flinders Island", "at": [148.0, -40.0]}],
+          "status": "dc_linked",
+          "source": "AEMO/TasNetworks: joined to the mainland only by the Basslink HVDC cable (2006), so its frequency wanders on its own. King and Flinders Islands are isolated (Hydro Tasmania)."
+        }
+      ]
+    },
+    {
+      "id": "australia_swis",
+      "name": "Australia SWIS (south-west Western Australia)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": [{"dataset": "abs_lga_2024", "state": "Western Australia", "except": ["Ashburton", "Broome", "Carnarvon", "Cue", "Derby-West Kimberley", "Dundas", "East Pilbara", "Esperance", "Exmouth", "Halls Creek", "Karratha", "Laverton", "Leonora", "Meekatharra", "Menzies", "Mount Magnet", "Murchison", "Ngaanyatjarraku", "Port Hedland", "Ravensthorpe", "Sandstone", "Shark Bay", "Upper Gascoyne", "Wiluna", "Wyndham-East Kimberley", "Yalgoo"], "iso": "AU-WA"}],
+          "status": "isolated",
+          "source": "AEMO WEM / Western Power: the SWIS runs from Kalbarri to Albany and east to Kalgoorlie, with no tie to any other grid. Approximated by local government area; Horizon Power's regional systems (Esperance, Gascoyne, Murchison, Goldfields towns, Kimberley) and the Pilbara are left out."
+        }
+      ]
+    },
+    {
+      "id": "pilbara",
+      "name": "Pilbara (NWIS)",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"dataset": "abs_lga_2024", "names": ["Port Hedland", "Karratha", "Ashburton", "East Pilbara"], "iso": "AU-WA"}],
+          "status": "isolated",
+          "source": "AEMO / WA Government: the North West Interconnected System (Horizon Power plus mining networks) is separate from the SWIS. Approximated by Pilbara local government areas."
+        }
+      ]
+    },
+    {
+      "id": "mount_isa",
+      "name": "Mount Isa / North-West Queensland",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"dataset": "abs_lga_2024", "names": ["Mount Isa", "Cloncurry"], "iso": "AU-QLD"}],
+          "status": "isolated",
+          "source": "Queensland Government: the North West Minerals Province power system is not connected to the NEM (CopperString not built)."
+        }
+      ]
+    },
+    {
+      "id": "darwin_katherine",
+      "name": "Darwin-Katherine",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": [{"dataset": "abs_lga_2024", "names": ["Darwin", "Darwin Waterfront Precinct", "Palmerston", "Litchfield", "Katherine", "Coomalie", "Wagait", "Belyuen"], "iso": "AU-NT"}],
+          "status": "isolated",
+          "source": "NT Utilities Commission / Power and Water: the Darwin-Katherine Interconnected System is not tied to any other grid."
+        }
+      ]
+    },
+    {
+      "id": "alice_springs",
+      "name": "Alice Springs",
+      "nominal_hz": 50,
+      "reference": "none",
+      "areas": [
+        {
+          "include": [{"dataset": "abs_lga_2024", "names": ["Alice Springs"], "iso": "AU-NT"}],
+          "status": "isolated",
+          "source": "Power and Water: the Alice Springs system is isolated."
+        }
+      ]
+    },
+    {
+      "id": "southern_africa",
+      "name": "Southern African Power Pool (interconnected members)",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["ZA", "LS", "SZ", "BW", "NA", "ZW", "ZM", "MZ", "CD-KA"],
+          "status": "synchronous",
+          "source": "SAPP: the operating members are AC-interconnected. Mozambique: Maputo is fed from South Africa (Motraco) and the EDM grid from Cahora Bassa, AC-tied to Zimbabwe (Songo-Bindura). Zambia and Zimbabwe are tied at Kariba. The southern DRC (former Katanga) is AC-tied through Zambia. Angola, Malawi and Tanzania are not (yet) connected."
+        }
+      ],
+      "notes": "Reference data is from South Africa; the AC-interconnected SAPP members share its frequency."
+    },
+    {
+      "id": "south_korea",
+      "name": "South Korea (mainland)",
+      "nominal_hz": 60,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["KR"],
+          "exclude": ["KR-49"],
+          "status": "isolated",
+          "source": "KPX: mainland grid with no foreign interconnection. Jeju is tied by HVDC only. Ulleungdo is isolated (not split out)."
+        }
+      ]
+    },
+    {
+      "id": "jeju",
+      "name": "Jeju",
+      "nominal_hz": 60,
+      "reference": "none",
+      "areas": [
+        {
+          "include": ["KR-49"],
+          "status": "dc_linked",
+          "source": "KEPCO: Jeju is tied to the mainland by HVDC #1, #2 and #3 only."
+        }
+      ]
+    },
+    {
+      "id": "malaysia_peninsular",
+      "name": "Peninsular Malaysia & Singapore",
+      "nominal_hz": 50,
+      "reference": "tracked",
+      "areas": [
+        {
+          "include": ["MY", "SG"],
+          "exclude": ["MY-12", "MY-13", "MY-15"],
+          "status": "synchronous",
+          "source": "TNB / Energy Market Authority: Peninsular Malaysia and Singapore are AC-interconnected (230 kV). Sabah, Sarawak and Labuan (Borneo) are separate grids. The tie to Thailand includes an HVDC link; whether its 132 kV AC tie runs closed is not established, so Thailand is left out."
+        }
+      ]
+    }
+  ],
+  "sixty_hz_countries": ["US", "CA", "MX", "GT", "BZ", "SV", "HN", "NI", "CR", "PA", "CU", "DO", "HT", "PR", "BS", "TT", "AG", "KN", "MS", "KY", "TC", "VG", "VI", "BM", "AW", "CO", "VE", "EC", "PE", "BR", "SR", "KR", "TW", "PH", "SA", "GU", "AS", "MP", "FM", "PW", "MH", "LR"],
+  "mixed_countries": {
+    "JP": "East 50 Hz, west 60 Hz",
+    "GY": "Mostly 60 Hz, some 50 Hz",
+    "LR": "Mostly 60 Hz, some 50 Hz",
+    "BR": "60 Hz; the Paraguayan half of Itaipu runs at 50 Hz",
+    "SA": "60 Hz since the 1990s unification"
+  }
+}

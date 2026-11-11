@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    # Ubuntu 24.04's GCC is too old for #embed; Clang 20 (noble-updates) has it.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain and libraries
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-20 ninja-build cmake pkg-config ffmpeg \
+            libboost1.83-dev libcli11-dev libcurl4-openssl-dev libzstd-dev libfftw3-dev libarchive-dev \
+            libssl-dev zlib1g-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev libgtest-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-20
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: build/geoloc_tests

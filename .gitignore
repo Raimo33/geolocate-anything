@@ -1,0 +1,8 @@
+build/
+.deps/
+/cache/
+reports/
+*.wav
+# scripts/build_grid_areas.py (offline, Python)
+__pycache__/
+.venv/
