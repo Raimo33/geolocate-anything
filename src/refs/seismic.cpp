@@ -8,6 +8,10 @@
 #include <numbers>
 #include <stdexcept>
 
+#if defined(__SSE__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
+
 namespace geo::seismic {
 
 namespace {
@@ -281,6 +285,24 @@ std::vector<double> box_mean(const std::vector<double>& x, std::size_t k) {
   }
   return out;
 }
+
+// The decoder's beliefs about far-off states decay below FLT_MIN, and x86 cores handle
+// such denormal floats about a hundred times slower: on real Raspberry Shake chunks the
+// decode ran 9 to 17 times longer than with them flushed to zero. A state that unlikely
+// adds nothing to a sum normalised to 1 (on five stations' 6 h chunks: the same seconds
+// kept, values within 0.2 mHz, against ~10 mHz of decoder noise), so the decode runs with
+// flush-to-zero and denormals-are-zero set, and the thread's previous mode is restored after.
+struct FlushDenormals {
+#if defined(__SSE__) || defined(_M_X64)
+  unsigned saved = _mm_getcsr();
+  FlushDenormals() { _mm_setcsr(saved | 0x8040u); }  // FTZ (bit 15) | DAZ (bit 6)
+  ~FlushDenormals() { _mm_setcsr(saved); }
+#else
+  FlushDenormals() = default;
+#endif
+  FlushDenormals(const FlushDenormals&) = delete;
+  FlushDenormals& operator=(const FlushDenormals&) = delete;
+};
 
 constexpr int WIDE_RATE = 4;    // baseband kept to +-1 Hz for the noise estimate
 constexpr int DEC_RATE = 1;     // decoder steps per second
@@ -597,6 +619,7 @@ Track track_nyquist(const std::vector<mseed::Segment>& segs, std::int64_t t0, st
   // 4. Decode two hours at a time, each block with 10 minutes of lead-in and lead-out, once with
   //    the roll-off and once without: a block is kept where the roll-off earns its place.
   const Decoder with(o, o.kappa), without(o, 0.0);
+  const FlushDenormals ftz;
   constexpr std::int64_t BLOCK_S = 2 * 3600;
   for (std::int64_t c0 = t0; c0 < t1; c0 += BLOCK_S) {
     const std::int64_t c1 = std::min(t1, c0 + BLOCK_S);
