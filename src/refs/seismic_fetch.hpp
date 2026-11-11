@@ -65,6 +65,8 @@ struct Network {
   const char* lone_before = nullptr;
   // Stations closer than this count as one site whatever their codes (0: by code only).
   float same_site_km = 0;
+  // Unix time the stations stopped being on this grid (0: still on it): later hours are not fetched.
+  std::int64_t until = 0;
 };
 const Network& east();
 const Network& west();
