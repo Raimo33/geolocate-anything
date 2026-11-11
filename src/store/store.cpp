@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cmath>
 #include <list>
+#include <mutex>
 #include <map>
 #include <memory>
 #include <set>
@@ -67,13 +68,16 @@ std::unordered_map<std::string, json::object>& manifest_cache() {
 
 // Open month files, most recently used first. Only files that exist are cached: a
 // missing month is looked up again (one stat) on each use, so a file that appears
-// later is never hidden by a stale "no such file" entry.
+// later is never hidden by a stale "no such file" entry. Locked: the search reads
+// blocks on several threads (a MonthFile itself is immutable once open).
 struct MonthCache {
-  static constexpr std::size_t CAP = 16;
+  static constexpr std::size_t CAP = 64;
+  std::mutex mu;
   std::list<std::pair<std::string, std::shared_ptr<MonthFile>>> lru;
   std::shared_ptr<MonthFile> get(const std::string& grid, const std::string& source, const std::string& month) {
     fs::path p = month_path(grid, source, month);
     std::string key = p.string();
+    std::lock_guard lk(mu);
     for (auto it = lru.begin(); it != lru.end(); ++it) {
       if (it->first == key) {
         lru.splice(lru.begin(), lru, it);
@@ -90,7 +94,12 @@ struct MonthCache {
   }
   void drop(const fs::path& p) {
     std::string key = p.string();
+    std::lock_guard lk(mu);
     lru.remove_if([&](auto& e) { return e.first == key; });
+  }
+  void clear() {
+    std::lock_guard lk(mu);
+    lru.clear();
   }
 };
 MonthCache& month_cache() {
@@ -101,7 +110,7 @@ MonthCache& month_cache() {
 
 void invalidate_caches() {
   manifest_cache().clear();
-  month_cache().lru.clear();
+  month_cache().clear();
 }
 
 static const json::object& manifest_ref(const std::string& grid, const std::string& source) {

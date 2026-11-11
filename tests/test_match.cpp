@@ -30,9 +30,10 @@ TEST_P(CorrPaths, MatchBruteForce) {
   auto r = match::sliding_corr(q, y);
   for (std::size_t lag : {0, 90, 1234, 2000, 4700}) {
     double b = brute(q, y, lag);
-    // Gap-free inputs take the single-precision fast path; the masked path is double.
+    // Gap-free reference windows take the single-precision fast path (a query with
+    // gaps too); windows over a reference gap the masked path, in double.
     if (std::isnan(b)) EXPECT_TRUE(std::isnan(r[lag]));
-    else EXPECT_NEAR(r[lag], b, q_gaps ? 3e-7 : 2e-5) << lag;  // r is stored as float
+    else EXPECT_NEAR(r[lag], b, 2e-5) << lag;  // r is stored as float
   }
   std::size_t best = 0;
   for (std::size_t i = 0; i < r.size(); ++i)
@@ -60,6 +61,34 @@ TEST(Filters, MovingMeanMatchesNaive) {
   for (int i = 0; i < 600; ++i) ramp[std::size_t(i)] = i / 599.0;
   auto hp = dsp::highpass(ramp, 61);
   for (int i = 40; i < 560; ++i) EXPECT_NEAR(hp[std::size_t(i)], 0.0, 1e-9);
+}
+
+// Frame smoothing next to gaps of every length (single samples, runs shorter and longer
+// than the frame, a missing day) against the renormalised FIR written out naively.
+TEST(Filters, SmoothLikeFramesMatchesNaive) {
+  auto x = test::normal(100000, 3);
+  for (int i : {7, 300, 301}) x[std::size_t(i)] = NAN;
+  for (int i = 1000; i < 1011; ++i) x[std::size_t(i)] = NAN;  // 11: one short of a 12 s frame
+  for (int i = 2000; i < 2012; ++i) x[std::size_t(i)] = NAN;  // 12: exactly a frame
+  for (int i = 3000; i < 3040; ++i) x[std::size_t(i)] = NAN;
+  for (int i = 10000; i < 96400; ++i) x[std::size_t(i)] = NAN;  // a day
+  for (int i = 99995; i < 100000; ++i) x[std::size_t(i)] = NAN;
+  const int n = 12, off = (n - 1) / 2;
+  std::vector<double> w(n);
+  double ws = 0;
+  for (int j = 0; j < n; ++j) ws += w[std::size_t(j)] = 0.5 - 0.5 * std::cos(2 * M_PI * (j + 1) / (n + 1));
+  auto sm = dsp::smooth_like_frames(x, double(n));
+  const auto len = std::ptrdiff_t(x.size());
+  for (std::ptrdiff_t i = 0; i < len; ++i) {
+    double num = 0, den = 0;
+    for (int j = 0; j < n; ++j) {
+      const std::ptrdiff_t k = i + off - j;
+      if (k >= 0 && k < len && std::isfinite(x[std::size_t(k)])) num += x[std::size_t(k)] * w[std::size_t(j)], den += w[std::size_t(j)];
+    }
+    den /= ws, num /= ws;
+    if (den < 0.5 - 1e-9) ASSERT_TRUE(std::isnan(sm[std::size_t(i)])) << i;
+    else ASSERT_NEAR(sm[std::size_t(i)], num / den, 1e-12) << i;
+  }
 }
 
 TEST(Peaks, MatchNaiveLocalMaxima) {
@@ -133,24 +162,36 @@ TEST(Search, JointScoreRewardsConsistentLevel) {
   EXPECT_EQ(std::max_element(sc.begin(), sc.end()) - sc.begin(), 5000);
 }
 
+// A 600 s trace of the stored reference at `start` plus noise; `gappy`: with runs of
+// invalid frames, as real recordings have.
+static enf::ENFTrace trace_at(const std::vector<float>& ref, std::size_t start, bool gappy) {
+  auto noise = test::normal(600, 9, 0.004);
+  enf::ENFTrace tr;
+  tr.nominal = 50;
+  tr.frame_s = 12.0;
+  for (std::size_t i = 0; i < 600; ++i) {
+    const double v = ref[start + i];
+    tr.times.push_back(double(i));
+    tr.freq.push_back(std::isfinite(v) ? 50.0 + v + noise[i] : NAN);
+    tr.snr_db.push_back(0);
+  }
+  if (gappy)
+    for (auto [a, b] : {std::pair{0, 7}, std::pair{40, 43}, std::pair{150, 162}, std::pair{301, 302}, std::pair{420, 431}, std::pair{590, 600}})
+      for (int i = a; i < b; ++i) tr.freq[std::size_t(i)] = NAN;
+  return tr;
+}
+
 // The two-pass search (decimated correlation, then exact scores around a shortlist)
 // finds what the single exact pass finds, with the same scores (all top_k of them), on
-// clean data, with the query over a reference gap, and with gaps among the other lags.
+// clean data, with the query over a reference gap, and with gaps among the other lags;
+// with a full query and with one missing frames.
 TEST(Search, TwoPassMatchesExactPass) {
   test::use_refstore();
   auto [t0, t1] = month_bounds(test::MONTH);
+  for (bool gappy : {false, true})
   for (auto [grid, start] : {std::pair{"great_britain", std::size_t(700000)}, std::pair{"continental_europe", std::size_t(1500)}, std::pair{"continental_europe", std::size_t(2000)}}) {
     auto ref = store::read(grid, t0, t1);
-    auto noise = test::normal(600, 9, 0.004);
-    enf::ENFTrace tr;
-    tr.nominal = 50;
-    tr.frame_s = 12.0;
-    for (std::size_t i = 0; i < 600; ++i) {
-      const double v = ref[start + i];
-      tr.times.push_back(double(i));
-      tr.freq.push_back(std::isfinite(v) ? 50.0 + v + noise[i] : NAN);
-      tr.snr_db.push_back(0);
-    }
+    auto tr = trace_at(ref, start, gappy);
     match::SearchOptions exact, fast;
     exact.decimate = 1;
     fast.decimate = 4;
@@ -163,5 +204,31 @@ TEST(Search, TwoPassMatchesExactPass) {
     EXPECT_EQ(a.n_lags, b.n_lags);
     ASSERT_EQ(a.candidates.size(), b.candidates.size());
     for (std::size_t k = 1; k < a.candidates.size(); ++k) EXPECT_NEAR(b.candidates[k].score, a.candidates[k].score, 1e-3 * std::fabs(a.candidates[k].score) + 1e-3) << grid << " #" << k;
+  }
+}
+
+// Blocks are searched on several threads; the result is the same as on one, to the bit.
+TEST(Search, ThreadsDoNotChangeResult) {
+  test::use_refstore();
+  auto [t0, t1] = month_bounds(test::MONTH);
+  auto ref = store::read("continental_europe", t0, t1);
+  for (bool gappy : {false, true}) {
+    auto tr = trace_at(ref, 1500, gappy);
+    match::SearchOptions one, many;
+    one.block_s = many.block_s = 300000;  // several blocks, two-pass and single-pass
+    one.threads = 1;
+    many.threads = 4;
+    auto a = match::search_grid(tr, "continental_europe", one), b = match::search_grid(tr, "continental_europe", many);
+    EXPECT_EQ(a.n_lags, b.n_lags);
+    EXPECT_EQ(a.coverage, b.coverage);
+    EXPECT_EQ(a.searched_from, b.searched_from);
+    EXPECT_EQ(a.searched_to, b.searched_to);
+    ASSERT_EQ(a.candidates.size(), b.candidates.size());
+    ASSERT_FALSE(a.candidates.empty());
+    for (std::size_t k = 0; k < a.candidates.size(); ++k) {
+      EXPECT_EQ(a.candidates[k].start_utc, b.candidates[k].start_utc) << k;
+      EXPECT_EQ(a.candidates[k].score, b.candidates[k].score) << k;
+      EXPECT_EQ(a.candidates[k].r, b.candidates[k].r) << k;
+    }
   }
 }

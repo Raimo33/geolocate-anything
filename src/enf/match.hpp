@@ -56,7 +56,12 @@ struct SearchOptions {
   int decimate = 4;
   int shortlist = 512;
   int min_coarse_len = 32;
+  // Threads the blocks are spread over: 0 = $GEOLOC_THREADS, else every core. The
+  // result does not depend on it.
+  int threads = 0;
 };
+
+int search_threads(int requested = 0);
 
 int hp_window_for(int m, int hp_window_s = 61);
 

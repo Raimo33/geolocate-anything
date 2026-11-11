@@ -1,16 +1,20 @@
 #include "enf/match.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <immintrin.h>
 #include <cmath>
 #include <map>
+#include <mutex>
 #include <numeric>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 
 #include "dsp/fft.hpp"
 #include "dsp/filters.hpp"
+#include "util/files.hpp"
 
 namespace geo::match {
 
@@ -23,6 +27,13 @@ std::string pyf(double x, const char* spec) {
   char b[64];
   std::snprintf(b, sizeof b, spec, x);
   return b;
+}
+
+int search_threads(int requested) {
+  if (requested > 0) return requested;
+  const std::string t = env("GEOLOC_THREADS");
+  if (!t.empty()) return std::clamp(std::atoi(t.c_str()), 1, 256);
+  return std::max(1, int(std::thread::hardware_concurrency()));
 }
 
 int hp_window_for(int m, int hp_window_s) {
@@ -75,15 +86,39 @@ class Query {
     }
     N = choose_nfft(m);
     qf.assign(qv.begin(), qv.end());
+    // The fast path's query: centred over its valid samples, zero where missing. Against
+    // a gap-free window, sum(qc * y) is then the covariance term of Pearson r exactly
+    // (sum(qc) = 0), and the window's sums over the valid samples come from prefix sums
+    // over the valid runs. A full query is one run and qc = qv.
+    qc.assign(qv.begin(), qv.end());
+    if (!full) {
+      const double mean = sum_q / nq;
+      for (std::size_t i = 0; i < qc.size(); ++i) qc[i] = w[i] ? qv[i] - mean : 0.0;
+    }
+    vq_c = 0;
+    for (double v : qc) vq_c += v * v;
+    if (full) vq_c = vq_full;
+    qcf.assign(qc.begin(), qc.end());
+    wf.assign(w.begin(), w.end());
+    for (int j = 0; j < m;) {
+      if (!w[std::size_t(j)]) {
+        ++j;
+        continue;
+      }
+      int e = j;
+      while (e < m && w[std::size_t(e)]) ++e;
+      runs.push_back({j, e});
+      j = e;
+    }
   }
 
-  // Reversed, zero-padded query spectrum (float), pre-scaled by 1/N.
+  // Reversed, zero-padded spectrum of qc (float), pre-scaled by 1/N.
   const fft::Buf<cf>& fast_spec() {
     if (!Fq_.size()) {
       auto& P = fft::RealPlanF::get(N);
       fft::Buf<float> in{std::size_t(N)};
       std::fill(in.begin(), in.end(), 0.0f);
-      for (int j = 0; j < m; ++j) in[std::size_t(m - 1 - j)] = static_cast<float>(qv[std::size_t(j)]);
+      for (int j = 0; j < m; ++j) in[std::size_t(m - 1 - j)] = static_cast<float>(qc[std::size_t(j)]);
       Fq_ = fft::Buf<cf>(std::size_t(N / 2 + 1));
       P.forward(in.data(), Fq_.data());
       const float s = 1.0f / float(N);
@@ -117,7 +152,10 @@ class Query {
   double min_overlap;
   std::vector<double> w, qv;
   std::vector<float> qf;  // qv in single precision
-  double nq = 0, vq_full = 0, sum_q = 0;
+  std::vector<double> qc;  // centred over the valid samples, 0 where missing (= qv when full)
+  std::vector<float> qcf, wf;  // qc and the validity mask in single precision
+  std::vector<std::pair<int, int>> runs;  // valid samples [a, b)
+  double nq = 0, vq_full = 0, sum_q = 0, vq_c = 0;
   bool full = false;
   int N = 0;
 
@@ -126,9 +164,10 @@ class Query {
   MaskSpec ms_;
 };
 
-// Pearson r for lags [0, r.size()) of y (y covers r.size() + m - 1 samples).
-// Overlap-save: each FFT of size N yields N - m + 1 lags of q * y; window sums of y and
-// y^2 come from chunk-local prefix sums (double), so the per-lag loop vectorises.
+// Pearson r for lags [0, r.size()) of y (y covers r.size() + m - 1 samples, none
+// missing). Overlap-save: each FFT of size N yields N - m + 1 lags of qc * y; window
+// sums of y and y^2 over the query's valid samples come from chunk-local prefix sums
+// (double), one difference per valid run, so the per-lag loops vectorise.
 template <class T>
 void fast_kernel(Query& Q, std::span<const T> y, std::span<float> r) {
   const int m = Q.m, N = Q.N, L = N - m + 1;
@@ -137,7 +176,7 @@ void fast_kernel(Query& Q, std::span<const T> y, std::span<float> r) {
   const auto& Fq = Q.fast_spec();
   static thread_local fft::Buf<float> in, out;
   static thread_local fft::Buf<cf> spec;
-  static thread_local std::vector<double> p1, p2;
+  static thread_local std::vector<double> p1, p2, s1, s2;
   if (in.size() != std::size_t(N)) {
     in = fft::Buf<float>(std::size_t(N));
     out = fft::Buf<float>(std::size_t(N));
@@ -145,7 +184,12 @@ void fast_kernel(Query& Q, std::span<const T> y, std::span<float> r) {
   }
   p1.resize(std::size_t(N) + 1);
   p2.resize(std::size_t(N) + 1);
-  const double vq = Q.vq_full, inv_m = 1.0 / m, floor_vy = 1e-12 * m;
+  const bool one_run = Q.runs.size() == 1;
+  if (!one_run) {
+    s1.resize(std::size_t(L));
+    s2.resize(std::size_t(L));
+  }
+  const double vq = Q.vq_c, inv_m = 1.0 / Q.nq, floor_vy = 1e-12 * Q.nq;
   const std::size_t nb = std::size_t(N / 2 + 1);
   for (std::size_t l0 = 0; l0 < n_out; l0 += std::size_t(L)) {
     const std::size_t nl = std::min<std::size_t>(std::size_t(L), n_out - l0);
@@ -188,9 +232,29 @@ void fast_kernel(Query& Q, std::span<const T> y, std::span<float> r) {
     const double* __restrict q1 = p1.data();
     const double* __restrict q2 = p2.data();
     float* __restrict ro = r.data() + l0;
+    if (one_run) {
+      const std::size_t a = std::size_t(Q.runs[0].first), b = std::size_t(Q.runs[0].second);
+      for (std::size_t i = 0; i < nl; ++i) {
+        const double Sy = q1[i + b] - q1[i + a], Syy = q2[i + b] - q2[i + a];
+        const double vy = Syy - Sy * Sy * inv_m;  // double: cancellation
+        const float rr = std::clamp(sqy[i] / std::sqrt(static_cast<float>(vq * vy)), -1.0f, 1.0f);
+        ro[i] = vy <= floor_vy ? NAN : rr;
+      }
+      continue;
+    }
+    double* __restrict w1 = s1.data();
+    double* __restrict w2 = s2.data();
+    std::fill(w1, w1 + nl, 0.0);
+    std::fill(w2, w2 + nl, 0.0);
+    for (auto [ra, rb] : Q.runs) {
+      const double *__restrict b1 = q1 + rb, *__restrict e1 = q1 + ra, *__restrict b2 = q2 + rb, *__restrict e2 = q2 + ra;
+      for (std::size_t i = 0; i < nl; ++i) {
+        w1[i] += b1[i] - e1[i];
+        w2[i] += b2[i] - e2[i];
+      }
+    }
     for (std::size_t i = 0; i < nl; ++i) {
-      const double Sy = q1[i + std::size_t(m)] - q1[i], Syy = q2[i + std::size_t(m)] - q2[i];
-      const double vy = Syy - Sy * Sy * inv_m;  // double: cancellation
+      const double Sy = w1[i], vy = w2[i] - Sy * Sy * inv_m;
       const float rr = std::clamp(sqy[i] / std::sqrt(static_cast<float>(vq * vy)), -1.0f, 1.0f);
       ro[i] = vy <= floor_vy ? NAN : rr;
     }
@@ -266,10 +330,6 @@ void corr_block(Query& Q, std::span<const T> y, std::vector<float>& r) {
   const std::size_t n_out = n >= m ? n - m + 1 : 0;
   r.resize(n_out);  // every lag is written below
   if (n_out == 0) return;
-  if (!Q.full) {
-    masked_kernel<T>(Q, y, r);
-    return;
-  }
   auto run = [&](std::size_t a, std::size_t b, bool masked) {  // lags [a, b)
     if (a >= b) return;
     auto seg = y.subspan(a, b - a + m - 1);
@@ -613,8 +673,53 @@ static void block_means(const T* x, std::size_t n, int D, std::vector<U>& out) {
   }
 }
 
-// Pearson r of the query against y[L, L + m): the fast kernel's formula on a full query
-// and gap-free window, the masked kernel's otherwise.
+// For a query with missing samples, over K gap-free windows y[k][0, m) in one pass:
+// qc . y (the covariance term), and the window's sum and sum of squares over the
+// query's valid samples (weights wf = 0/1). Three 8-wide accumulators per window.
+template <int K>
+static void masked_sums(const Query& Q, const float* const* y, double* Sqy, double* Sy, double* Syy) {
+  const std::size_t m = std::size_t(Q.m);
+  const float* __restrict q = Q.qcf.data();
+  const float* __restrict w = Q.wf.data();
+  __m256 aq[K], ay[K], ayy[K];
+  for (int k = 0; k < K; ++k) aq[k] = ay[k] = ayy[k] = _mm256_setzero_ps();
+  std::size_t j = 0;
+  for (; j + 8 <= m; j += 8) {
+    const __m256 q0 = _mm256_loadu_ps(q + j), w0 = _mm256_loadu_ps(w + j);
+    for (int k = 0; k < K; ++k) {
+      const __m256 v = _mm256_loadu_ps(y[k] + j), wv = _mm256_mul_ps(w0, v);
+      aq[k] = _mm256_fmadd_ps(q0, v, aq[k]);
+      ay[k] = _mm256_add_ps(ay[k], wv);
+      ayy[k] = _mm256_fmadd_ps(wv, v, ayy[k]);
+    }
+  }
+  auto hsum = [](__m256 v) {
+    __m128 h = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+    h = _mm_add_ps(h, _mm_movehl_ps(h, h));
+    h = _mm_add_ss(h, _mm_movehdup_ps(h));
+    return _mm_cvtss_f32(h);
+  };
+  for (int k = 0; k < K; ++k) {
+    float tq = hsum(aq[k]), ty = hsum(ay[k]), tyy = hsum(ayy[k]);
+    for (std::size_t i = j; i < m; ++i) {
+      const float v = y[k][i], wv = w[i] * v;
+      tq += q[i] * v;
+      ty += wv;
+      tyy += wv * v;
+    }
+    Sqy[k] = tq, Sy[k] = ty, Syy[k] = tyy;
+  }
+}
+
+// r of a query with missing samples from masked_sums.
+static float masked_r(const Query& Q, double Sqy, double Sy, double Syy) {
+  const double vy = Syy - Sy * Sy / Q.nq;
+  if (vy <= 1e-12 * Q.nq || Q.vq_c <= 1e-12) return NAN;
+  return static_cast<float>(std::clamp(Sqy / std::sqrt(Q.vq_c * vy), -1.0, 1.0));
+}
+
+// Pearson r of the query against y[L, L + m): the fast kernel's formula on a gap-free
+// window, the masked kernel's otherwise.
 static float exact_r(const Query& Q, std::span<const float> y, std::size_t L) {
   const std::size_t m = std::size_t(Q.m);
   const float* yp = y.data() + L;
@@ -632,6 +737,12 @@ static float exact_r(const Query& Q, std::span<const float> y, std::size_t L) {
     const double vy = double(Syy) - double(Sy) * double(Sy) / double(m);
     if (vy <= 1e-12 * double(m)) return NAN;
     return static_cast<float>(std::clamp(double(Sqy) / std::sqrt(Q.vq_full * vy), -1.0, 1.0));
+  }
+  if (!Q.full && !dsp::has_nan(yp, m)) {
+    const float* w[1] = {yp};
+    double a, b, c;
+    masked_sums<1>(Q, w, &a, &b, &c);
+    return masked_r(Q, a, b, c);
   }
   double n = 0, Sy = 0, Syy = 0, Sqy = 0, Sq = 0, Sqq = 0;
   for (std::size_t j = 0; j < m; ++j) {
@@ -708,15 +819,40 @@ static void r_at(const Query& Q, std::span<const float> y, const std::size_t* la
   }
 }
 
+// exact_r at `lags` for a query with missing samples: gap-free windows four at a time.
+static void gappy_r_at(const Query& Q, std::span<const float> y, const std::size_t* lags, std::size_t n, float* out) {
+  const std::size_t m = std::size_t(Q.m);
+  std::size_t i = 0;
+  for (; i + 4 <= n; i += 4) {
+    const float* w[4] = {y.data() + lags[i], y.data() + lags[i + 1], y.data() + lags[i + 2], y.data() + lags[i + 3]};
+    bool clean = true;
+    for (int k = 0; k < 4 && clean; ++k) clean = !dsp::has_nan(w[k], m);
+    if (!clean) {
+      for (int k = 0; k < 4; ++k) out[i + std::size_t(k)] = exact_r(Q, y, lags[i + std::size_t(k)]);
+      continue;
+    }
+    double a[4], b[4], c[4];
+    masked_sums<4>(Q, w, a, b, c);
+    for (int k = 0; k < 4; ++k) out[i + std::size_t(k)] = masked_r(Q, a[k], b[k], c[k]);
+  }
+  for (; i < n; ++i) out[i] = exact_r(Q, y, lags[i]);
+}
+
 // exact_r for lags [a, b]. A full query over a gap-free stretch slides the window sums
 // (double) from lag to lag, so only the dot products cost O(m) per lag.
 static void exact_r_range(const Query& Q, std::span<const float> y, std::size_t a, std::size_t b, float* out) {
   const std::size_t m = std::size_t(Q.m), n = b - a + 1;
-  if (!Q.full || dsp::has_nan(y.data() + a, n + m - 1)) {
+  static thread_local std::vector<std::size_t> lags;
+  if (!Q.full) {
+    lags.resize(n);
+    for (std::size_t k = 0; k < n; ++k) lags[k] = a + k;
+    gappy_r_at(Q, y, lags.data(), n, out);
+    return;
+  }
+  if (dsp::has_nan(y.data() + a, n + m - 1)) {
     for (std::size_t L = a; L <= b; ++L) out[L - a] = exact_r(Q, y, L);
     return;
   }
-  static thread_local std::vector<std::size_t> lags;
   static thread_local std::vector<double> s1, s2;
   lags.resize(n);
   s1.resize(n);
@@ -749,7 +885,10 @@ static void sampled_r(const Query& Q, std::span<const float> y, std::size_t n_ou
   const std::size_t m = std::size_t(Q.m), ns = (n_out + step - 1) / step;
   r.resize(ns);
   if (!Q.full) {
-    for (std::size_t k = 0; k < ns; ++k) r[k] = exact_r(Q, y, k * step);
+    static thread_local std::vector<std::size_t> gl;
+    gl.resize(ns);
+    for (std::size_t k = 0; k < ns; ++k) gl[k] = k * step;
+    gappy_r_at(Q, y, gl.data(), ns, r.data());
     return;
   }
   const std::size_t qc = m / step, rem = m % step;
@@ -880,7 +1019,6 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
     std::vector<Candidate> cands;
     i64 n_lags = 0, finite_cnt = 0, total_cnt = 0;
     double from = NAN, to = NAN;
-    bool active = false;
     std::string error;
   };
   std::vector<Q> qs(traces.size());
@@ -926,10 +1064,66 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
   for (std::size_t i = 0; i < qs.size(); ++i)
     if (qs[i].query) groups[{qs[i].hp, qs[i].tr->frame_s}].push_back(i);
 
+  // The query spectra (and the FFT plans behind them) are built lazily; build them now,
+  // before the blocks are spread over threads that only read them.
+  for (auto& q : qs)
+    for (Query* Qp : {q.query.get(), q.coarse.get()})
+      if (Qp) {
+        Qp->fast_spec();
+        Qp->mask_spec();
+      }
+
+  // Every block of every coverage span, with the queries it serves. A query drops out of
+  // a span once it no longer fits before the span's end, or once a block reached it.
+  struct Job {
+    int hp, margin;
+    double frame_s;
+    i64 s, b;
+    std::vector<std::size_t> active;  // indices into qs
+  };
+  std::vector<Job> jobs;
+  const auto spans = store::coverage_intervals(grid);
+  for (auto& [key, members] : groups) {
+    std::vector<char> active(qs.size(), 0);
+    for (auto iv : spans) {
+      const i64 a = o.from ? std::max(iv.a, *o.from) : iv.a;
+      const i64 b = o.to ? std::min(iv.b, *o.to) : iv.b;
+      for (auto qi : members) active[qi] = 1;
+      for (i64 s = a;; s += o.block_s) {
+        Job j{key.first, qs[members[0]].margin, key.second, s, b, {}};
+        for (auto qi : members) {
+          if (active[qi] && s + qs[qi].m <= b) j.active.push_back(qi);
+          else active[qi] = 0;
+        }
+        if (j.active.empty()) break;
+        for (auto qi : j.active)
+          if (std::min(b, s + o.block_s + qs[qi].m - 1) >= b) active[qi] = 0;  // this block reaches the end
+        jobs.push_back(std::move(j));
+      }
+    }
+  }
+
+  // What one block found for one query; merged in block order below, so the result is
+  // the same whatever the number of threads.
+  struct Part {
+    std::vector<Candidate> cands;
+    i64 n_lags = 0, finite_cnt = 0, total_cnt = 0;
+    double from = NAN, to = NAN;
+  };
+  std::vector<std::vector<Part>> parts(jobs.size());
+
+  // Per-thread working buffers: a block's reference at each filter stage, its scores.
+  struct Buffers {
+    std::vector<float> raw, smooth, hpv;  // float: the store is 1 mHz-quantised float data
+    std::vector<std::pair<std::size_t, std::size_t>> nan_runs;  // [a, b) of raw, before filling
+    std::vector<float> r, score;
+    std::vector<float> yc, lvc, rc, scc, rx;  // two-pass search
+  };
+
   // Two-pass block search (see "two-pass search" above): decimated correlation and
   // score, then the exact score on the lags around each shortlisted peak.
-  std::vector<float> yc, lvc, rc, scc, rx;
-  auto two_pass = [&](Q& q, int D, std::span<const float> y, std::span<const float> lv, std::size_t n_out, i64 s, std::size_t qi) {
+  auto two_pass = [&](Buffers& w, Q& q, int D, std::span<const float> y, std::span<const float> lv, std::size_t n_out, i64 s,
+                      std::size_t qi, std::vector<Candidate>& out) {
     const std::size_t ud = std::size_t(D), m = std::size_t(q.m);
     ScoreParams P;
     if (o.joint) {
@@ -950,15 +1144,15 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
     }
     std::vector<std::size_t> peaks;
     {
-      block_means(y.data(), y.size(), D, yc);
-      corr_block<float>(*q.coarse, std::span<const float>(yc), rc);
-      std::span<const float> sc = rc;
+      block_means(y.data(), y.size(), D, w.yc);
+      corr_block<float>(*q.coarse, std::span<const float>(w.yc), w.rc);
+      std::span<const float> sc = w.rc;
       if (o.joint) {
-        block_means(lv.data(), lv.size(), D, lvc);
+        block_means(lv.data(), lv.size(), D, w.lvc);
         ScoreParams Pc;
-        joint_score_impl<float>(rc, std::span<const float>(lvc), q.q_mean, q.coarse->m, scc, &Pc, P.lut);
+        joint_score_impl<float>(w.rc, std::span<const float>(w.lvc), q.q_mean, q.coarse->m, w.scc, &Pc, P.lut);
         if (!Pc.ok) return;
-        sc = scc;
+        sc = w.scc;
       }
       // Every bump (a frame apart), not only the regional maxima: which bump of a region
       // is highest can differ between the decimated and the exact score.
@@ -970,8 +1164,8 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
       // Lags [lo, hi] around the coarse peak, plus one each side for the refinement.
       const std::size_t c = j * ud, lo = c >= ud ? c - ud : 0, hi = std::min(n_out - 1, c + ud);
       const std::size_t a = lo ? lo - 1 : 0, b = std::min(n_out - 1, hi + 1);
-      rx.resize(b - a + 1);
-      exact_r_range(*q.query, y, a, b, rx.data());
+      w.rx.resize(b - a + 1);
+      exact_r_range(*q.query, y, a, b, w.rx.data());
       // Level window sums, slid from lag to lag.
       double cnt = 0, sum = 0;
       if (o.joint) {
@@ -991,14 +1185,14 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
           if (in == in) cnt += 1, sum += in;
           if (out == out) cnt -= 1, sum -= out;
         }
-        const float rr = rx[L - a];
+        const float rr = w.rx[L - a];
         const float v = o.joint ? exact_score(rr, cnt, sum, q.m, q.q_mean, P) : rr;
         if (v > best) best = v, best_r = rr, bi = L;
       }
       if (!(best > -INFINITY)) continue;
       Candidate cd;
       cd.grid = grid;
-      cd.start_utc = double(s) + double(bi) + refine_lag(std::span<const float>(rx), std::ptrdiff_t(bi - a)) - q.first;
+      cd.start_utc = double(s) + double(bi) + refine_lag(std::span<const float>(w.rx), std::ptrdiff_t(bi - a)) - q.first;
       cd.r = best_r;
       cd.score = best;
       cd.origin = static_cast<int>(qi);
@@ -1011,105 +1205,115 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
     for (std::size_t i = 0; i < found.size() && kept < std::size_t(o.top_k); ++i) {
       bool top = true;
       for (std::size_t j = 0; j < i && top; ++j) top = std::fabs(found[j].start_utc - found[i].start_utc) > q.excl;
-      if (top) q.cands.push_back(std::move(found[i])), ++kept;
+      if (top) out.push_back(std::move(found[i])), ++kept;
     }
   };
 
-  const auto spans = store::coverage_intervals(grid);
-  std::vector<float> raw;
-  std::vector<float> smooth, hpv;  // float: the store is 1 mHz-quantised float data
-  std::vector<std::pair<std::size_t, std::size_t>> nan_runs;  // [a, b) of raw, before filling
-  std::vector<float> r, score;
-  for (auto& [key, members] : groups) {
-    const int hp = key.first;
-    const double frame_s = key.second;
-    const int margin = qs[members[0]].margin;
-    for (auto iv : spans) {
-      const i64 a = o.from ? std::max(iv.a, *o.from) : iv.a;
-      const i64 b = o.to ? std::min(iv.b, *o.to) : iv.b;
-      for (auto qi : members) qs[qi].active = true;
-      for (i64 s = a;; s += o.block_s) {
-        i64 e_max = s;
-        bool any = false;
-        for (auto qi : members) {
-          auto& q = qs[qi];
-          if (q.active && s + q.m <= b) {
-            any = true;
-            e_max = std::max(e_max, std::min(b, s + o.block_s + q.m - 1));
-          } else {
-            q.active = false;
-          }
+  // One block: read and filter the reference once for every query it serves, then
+  // correlate and shortlist each query against it.
+  auto run_job = [&](Buffers& w, std::size_t ji) {
+    const Job& job = jobs[ji];
+    const i64 s = job.s, b = job.b;
+    i64 e_max = s;
+    for (auto qi : job.active) e_max = std::max(e_max, std::min(b, s + o.block_s + qs[qi].m - 1));
+    const i64 r0 = s - job.margin, r1 = e_max + job.margin;
+    auto& raw = w.raw;
+    raw.resize(std::size_t(r1 - r0));
+    store::read(grid, r0, r1, raw);
+    // Missing samples as runs (for the coverage counts), then the gaps bridged in place.
+    w.nan_runs.clear();
+    for (std::size_t k = dsp::next_nan(raw.data(), 0, raw.size()); k < raw.size();) {
+      std::size_t e = k;
+      while (e < raw.size() && raw[e] != raw[e]) ++e;
+      w.nan_runs.emplace_back(k, e);
+      k = dsp::next_nan(raw.data(), e, raw.size());
+    }
+    dsp::fill_short_gaps<float>(raw);
+    w.smooth.resize(raw.size());
+    dsp::smooth_like_frames<float>(raw, job.frame_s, w.smooth);
+    w.hpv.resize(w.smooth.size());
+    dsp::highpass<float>(w.smooth, job.hp, w.hpv);
+    auto& out = parts[ji];
+    out.resize(job.active.size());
+    for (std::size_t k = 0; k < job.active.size(); ++k) {
+      const std::size_t qi = job.active[k];
+      auto& q = qs[qi];
+      auto& part = out[k];
+      const i64 e = std::min(b, s + o.block_s + q.m - 1);
+      const std::size_t off = std::size_t(job.margin), n = std::size_t(e - s);
+      std::span<const float> y(w.hpv.data() + off, n), lv(w.smooth.data() + off, n);
+      const std::size_t n_out = n >= std::size_t(q.m) ? n - std::size_t(q.m) + 1 : 0;
+      const int D = q.D;
+      // Short blocks (a stretch of data between long gaps) stay single-pass: the
+      // exact normalisation sample (20,000 lags) would cost more than it saves.
+      if (D > 1 && n_out >= MIN_TWO_PASS_LAGS) {
+        two_pass(w, q, D, y, lv, n_out, s, qi, part.cands);
+      } else {
+        corr_block<float>(*q.query, y, w.r);
+        std::span<const float> sc = w.r;
+        if (o.joint) {
+          joint_score_into(w.r, lv, q.q_mean, q.m, w.score);
+          sc = w.score;
         }
-        if (!any) break;
-        // Read and filter the reference once for every query of the group.
-        const i64 r0 = s - margin, r1 = e_max + margin;
-        {
-          raw.resize(std::size_t(r1 - r0));
-          store::read(grid, r0, r1, raw);
-        }
-        // Missing samples as runs (for the coverage counts), then the gaps bridged in place.
-        nan_runs.clear();
-        for (std::size_t k = dsp::next_nan(raw.data(), 0, raw.size()); k < raw.size();) {
-          std::size_t e = k;
-          while (e < raw.size() && raw[e] != raw[e]) ++e;
-          nan_runs.emplace_back(k, e);
-          k = dsp::next_nan(raw.data(), e, raw.size());
-        }
-        {
-          dsp::fill_short_gaps<float>(raw);
-          smooth.resize(raw.size());
-          dsp::smooth_like_frames<float>(raw, frame_s, smooth);
-          hpv.resize(smooth.size());
-          dsp::highpass<float>(smooth, hp, hpv);
-        }
-        for (auto qi : members) {
-          auto& q = qs[qi];
-          if (!q.active) continue;
-          const i64 e = std::min(b, s + o.block_s + q.m - 1);
-          const std::size_t off = std::size_t(margin), n = std::size_t(e - s);
-          std::span<const float> y(hpv.data() + off, n), lv(smooth.data() + off, n);
-          const std::size_t n_out = n >= std::size_t(q.m) ? n - std::size_t(q.m) + 1 : 0;
-          const int D = q.D;
-          // Short blocks (a stretch of data between long gaps) stay single-pass: the
-          // exact normalisation sample (20,000 lags) would cost more than it saves.
-          if (D > 1 && n_out >= MIN_TWO_PASS_LAGS) {
-            two_pass(q, D, y, lv, n_out, s, qi);
-          } else {
-            {
-              corr_block<float>(*q.query, y, r);
-            }
-            std::span<const float> sc = r;
-            if (o.joint) {
-              joint_score_into(r, lv, q.q_mean, q.m, score);
-              sc = score;
-            }
-            for (auto i : local_peaks(sc, std::size_t(o.top_k), q.excl)) {
-              Candidate c;
-              c.grid = grid;
-              c.start_utc = double(s) + double(i) + refine_lag(r, std::ptrdiff_t(i)) - q.first;
-              c.r = r[i];
-              c.score = sc[i];
-              c.origin = static_cast<int>(qi);
-              q.cands.push_back(std::move(c));
-            }
-          }
-          q.n_lags += i64(n_out);
-          {
-            std::size_t missing = 0;
-            for (auto [ra, rb] : nan_runs) {
-              const std::size_t lo = std::max(ra, off), hi = std::min(rb, off + n);
-              missing += hi > lo ? hi - lo : 0;
-            }
-            q.finite_cnt += i64(n - missing);
-          }
-          q.total_cnt += i64(n);
-          if (std::isnan(q.from)) q.from = double(s);
-          q.to = double(e);
-          if (e >= b) q.active = false;
+        for (auto i : local_peaks(sc, std::size_t(o.top_k), q.excl)) {
+          Candidate c;
+          c.grid = grid;
+          c.start_utc = double(s) + double(i) + refine_lag(w.r, std::ptrdiff_t(i)) - q.first;
+          c.r = w.r[i];
+          c.score = sc[i];
+          c.origin = static_cast<int>(qi);
+          part.cands.push_back(std::move(c));
         }
       }
+      part.n_lags = i64(n_out);
+      std::size_t missing = 0;
+      for (auto [ra, rb] : w.nan_runs) {
+        const std::size_t lo = std::max(ra, off), hi = std::min(rb, off + n);
+        missing += hi > lo ? hi - lo : 0;
+      }
+      part.finite_cnt = i64(n - missing);
+      part.total_cnt = i64(n);
+      part.from = double(s);
+      part.to = double(e);
     }
+  };
+
+  // Blocks are independent: spread them over the cores, each thread taking the next
+  // block not yet started.
+  const int n_threads = std::max(1, std::min<int>(search_threads(o.threads), int(jobs.size())));
+  std::atomic<std::size_t> next{0};
+  std::exception_ptr err;
+  std::mutex err_mu;
+  auto worker = [&] {
+    Buffers w;
+    for (std::size_t ji; (ji = next.fetch_add(1)) < jobs.size();) {
+      try {
+        run_job(w, ji);
+      } catch (...) {
+        std::lock_guard lk(err_mu);
+        if (!err) err = std::current_exception();
+        next = jobs.size();
+      }
+    }
+  };
+  if (n_threads == 1) {
+    worker();
+  } else {
+    std::vector<std::jthread> pool;
+    for (int t = 0; t < n_threads; ++t) pool.emplace_back(worker);
   }
+  if (err) std::rethrow_exception(err);
+  for (std::size_t ji = 0; ji < jobs.size(); ++ji)
+    for (std::size_t k = 0; k < jobs[ji].active.size(); ++k) {
+      auto& q = qs[jobs[ji].active[k]];
+      auto& part = parts[ji][k];
+      q.cands.insert(q.cands.end(), std::make_move_iterator(part.cands.begin()), std::make_move_iterator(part.cands.end()));
+      q.n_lags += part.n_lags;
+      q.finite_cnt += part.finite_cnt;
+      q.total_cnt += part.total_cnt;
+      if (std::isnan(q.from)) q.from = part.from;
+      q.to = part.to;
+    }
 
   const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - tic).count();
   std::vector<GridResult> out(qs.size());

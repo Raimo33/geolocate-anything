@@ -12,13 +12,14 @@
 namespace geo::codec {
 
 namespace {
-// Single-threaded process: one compression and one decompression context, reused.
+// One compression and one decompression context per thread, reused (the search decodes
+// on several threads at once).
 ZSTD_CCtx* cctx() {
-  static std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> c(ZSTD_createCCtx(), ZSTD_freeCCtx);
+  static thread_local std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> c(ZSTD_createCCtx(), ZSTD_freeCCtx);
   return c.get();
 }
 ZSTD_DCtx* dctx() {
-  static std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> d(ZSTD_createDCtx(), ZSTD_freeDCtx);
+  static thread_local std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> d(ZSTD_createDCtx(), ZSTD_freeDCtx);
   return d.get();
 }
 template <class T>

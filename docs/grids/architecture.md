@@ -299,8 +299,9 @@ shows up as a constant offset (reported as `offset_hz`).
 
 | Case | Method | Cost per block of B lags |
 |---|---|---|
-| Gap-free block, gap-free query (common) | **Overlap-save** FFT cross-correlation q ⋆ y in **single precision**, with FFTs of N ≈ 4–8 m (4096 for a 10-minute clip: cache-resident, FFTW-planned), each yielding N − m + 1 lags. Window mean and energy of y from chunk-local prefix sums (double) | 2 FFTs of size N per N − m + 1 lags, O(1) per lag rest |
-| Gaps | Lags whose window touches a gap are split into runs. Only those runs (widened by 4m to avoid tiny FFTs) use the exact NaN-aware masked formula (six correlations in double; three when the chunk itself is gap-free) | proportional to gaps × m |
+| Gap-free reference window (common) | **Overlap-save** FFT cross-correlation q ⋆ y in **single precision**, with FFTs of N ≈ 4–8 m (4096 for a 10-minute clip: cache-resident, FFTW-planned), each yielding N − m + 1 lags. Window mean and energy of y from chunk-local prefix sums (double) | 2 FFTs of size N per N − m + 1 lags, O(1) per lag rest |
+| … query with missing frames (most real recordings) | The same, with the query centred over its valid frames and zero elsewhere, so q ⋆ y is the covariance term exactly; the window's sums over the valid frames are one prefix-sum difference per valid run of the query | as above, plus O(runs) per lag |
+| Reference gaps | Lags whose window touches a gap are split into runs. Only those runs (widened by 4m to avoid tiny FFTs) use the exact NaN-aware masked formula (six correlations in double; three when the chunk itself is gap-free) | proportional to gaps × m |
 
 * Reference gaps of ≤ 10 s are bridged linearly before smoothing. Generator inertia
   makes faster change physically impossible. This took Nordic from 290 to 34 gap runs
@@ -339,8 +340,18 @@ shows up as a constant offset (reported as `offset_hz`).
   instead of bumps was not enough: which bump of a region is highest can differ
   between the decimated and the exact score. Clips under 128 s use a smaller factor
   (60 s: single pass), and blocks under 2^18 lags stay single-pass.
-* Single-threaded by design: 2^20-lag blocks are processed one after another in
-  O(B) memory (~30 MB), whatever N is.
+* **Blocks on every core.** The reference is cut into 2^20-lag blocks; each is read,
+  decoded, filtered, correlated and shortlisted on its own in O(B) memory (~30 MB per
+  thread), whatever N is. Threads take the next unstarted block (`GEOLOC_THREADS`,
+  default every core), and the blocks' candidates are merged in time order, so the
+  result is the same to the bit on any number of threads.
+* Until 2026-11 a query with any missing frame (87% valid is typical of a real
+  recording) took the double-precision masked kernel at every lag and a scalar exact
+  r, and reference smoothing renormalised every output inside a long gap: 6.5M lags/s
+  per core. With those fixed and the SIMD rescoring, a 10-minute clip against all 14
+  stored 50 Hz grids (1.4 × 10⁹ lags) is searched at ~19M lags/s per core: 437 s
+  became 167 s on one core and 39 s on 8 threads (laptop i5-1235U), with the same
+  top-10 candidates on every grid.
 * The best peaks get sub-second refinement (parabola through r at lags i−1, i, i+1).
 
 ### Verdict: how sure are we?

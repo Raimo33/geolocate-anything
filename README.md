@@ -56,8 +56,8 @@ recording started**.
    - Viterbi decoding finds the most plausible smooth path, since grid frequency cannot
      jump.
 5. **Search.** Every stored second of every candidate grid is streamed from memory-mapped
-   files and aligned by overlap-save FFT cross-correlation (about 55 million candidate
-   alignments per second on one core). Each alignment is scored on the shape of the
+   files and aligned by overlap-save FFT cross-correlation (about 19 million candidate
+   alignments per second per core, blocks spread over every core). Each alignment is scored on the shape of the
    wander and on its absolute level, allowing for the recorder's clock error.
 6. **Verdict.** The scores of the many wrong alignments form an extreme-value null
    distribution, which gives the probability that a wrong alignment would lead by the
@@ -253,7 +253,8 @@ are backfilled on a separate machine and pushed (`refs push`), never refreshed b
 dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
 2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);
 `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
-cores, 4 to 8).
+cores, 4 to 8), and how many threads a search spreads its blocks over (default: every
+core; each takes ~30 MB).
 
 ## Building
 

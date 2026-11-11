@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <stdexcept>
 
 #include "store/store.hpp"
@@ -24,9 +25,14 @@ template class Buf<cd>;
 template class Buf<cf>;
 
 namespace {
+// FFTW's planner (plan creation and destruction, wisdom) is not thread-safe; executing a
+// plan is. Every planner call goes through this lock, so searches can run on threads.
+std::recursive_mutex g_planner;
+using Lock = std::lock_guard<std::recursive_mutex>;
 bool g_wisdom_loaded = false, g_wisdom_dirty = false;
 std::string wisdom_path(char kind) { return (store::cache_dir() / (std::string("fftw-wisdom-") + kind)).string(); }
 void load_wisdom() {
+  Lock lk(g_planner);
   if (g_wisdom_loaded) return;
   g_wisdom_loaded = true;
   fftw_import_wisdom_from_filename(wisdom_path('d').c_str());
@@ -35,6 +41,7 @@ void load_wisdom() {
 }  // namespace
 
 void save_wisdom() {
+  Lock lk(g_planner);
   if (!g_wisdom_dirty) return;
   fftw_export_wisdom_to_filename(wisdom_path('d').c_str());
   fftwf_export_wisdom_to_filename(wisdom_path('f').c_str());
@@ -44,9 +51,14 @@ void save_wisdom() {
 Buf<cd> rfft_inplace(std::size_t n, const std::function<void(double*)>& fill) {
   Buf<cd> out(n / 2 + 1);  // 2 (n/2 + 1) >= n doubles: room for the real input
   auto* d = reinterpret_cast<double*>(out.data());
-  fftw_plan p = fftw_plan_dft_r2c_1d(static_cast<int>(n), d, reinterpret_cast<fftw_complex*>(out.data()), FFTW_ESTIMATE);
+  fftw_plan p;
+  {
+    Lock lk(g_planner);
+    p = fftw_plan_dft_r2c_1d(static_cast<int>(n), d, reinterpret_cast<fftw_complex*>(out.data()), FFTW_ESTIMATE);
+  }
   fill(d);
   fftw_execute(p);
+  Lock lk(g_planner);
   fftw_destroy_plan(p);
   return out;
 }
@@ -55,24 +67,36 @@ void backward_inplace(std::span<cd> a) {
   if (a.empty()) return;
   Buf<cd> buf(a.size());
   auto* io = reinterpret_cast<fftw_complex*>(buf.data());
-  fftw_plan p = fftw_plan_dft_1d(static_cast<int>(a.size()), io, io, FFTW_BACKWARD, FFTW_ESTIMATE);
+  fftw_plan p;
+  {
+    Lock lk(g_planner);
+    p = fftw_plan_dft_1d(static_cast<int>(a.size()), io, io, FFTW_BACKWARD, FFTW_ESTIMATE);
+  }
   std::memcpy(buf.data(), a.data(), a.size() * sizeof(cd));
   fftw_execute(p);
-  fftw_destroy_plan(p);
+  {
+    Lock lk(g_planner);
+    fftw_destroy_plan(p);
+  }
   std::memcpy(a.data(), buf.data(), a.size() * sizeof(cd));
 }
 
 RealPlan::RealPlan(int n) : n_(n) {
+  Lock lk(g_planner);
   Buf<double> in(static_cast<std::size_t>(n));
   Buf<cd> out(static_cast<std::size_t>(n / 2 + 1));
   fwd_ = fftw_plan_dft_r2c_1d(n, in.data(), reinterpret_cast<fftw_complex*>(out.data()), FFTW_ESTIMATE);
 }
-RealPlan::~RealPlan() { fftw_destroy_plan(static_cast<fftw_plan>(fwd_)); }
+RealPlan::~RealPlan() {
+  Lock lk(g_planner);
+  fftw_destroy_plan(static_cast<fftw_plan>(fwd_));
+}
 void RealPlan::forward(double* in, cd* out) const {
   fftw_execute_dft_r2c(static_cast<fftw_plan>(fwd_), in, reinterpret_cast<fftw_complex*>(out));
 }
 
 RealPlanF::RealPlanF(int n) : n_(n) {
+  Lock lk(g_planner);
   load_wisdom();
   Buf<float> r(static_cast<std::size_t>(n));
   Buf<cf> c(static_cast<std::size_t>(n / 2 + 1));
@@ -81,11 +105,13 @@ RealPlanF::RealPlanF(int n) : n_(n) {
   g_wisdom_dirty = true;
 }
 RealPlanF::~RealPlanF() {
+  Lock lk(g_planner);
   fftwf_destroy_plan(static_cast<fftwf_plan>(fwd_));
   fftwf_destroy_plan(static_cast<fftwf_plan>(inv_));
 }
 const RealPlanF& RealPlanF::get(int n) {
-  static std::map<int, std::unique_ptr<RealPlanF>> plans;
+  static std::map<int, std::unique_ptr<RealPlanF>> plans;  // never erased: references stay valid
+  Lock lk(g_planner);
   auto& p = plans[n];
   if (!p) p.reset(new RealPlanF(n));
   return *p;
@@ -98,6 +124,7 @@ void RealPlanF::inverse(cf* in, float* out) const {
 }
 
 RealPlanD::RealPlanD(int n) : n_(n) {
+  Lock lk(g_planner);
   load_wisdom();
   Buf<double> r(static_cast<std::size_t>(n));
   Buf<cd> c(static_cast<std::size_t>(n / 2 + 1));
@@ -106,11 +133,13 @@ RealPlanD::RealPlanD(int n) : n_(n) {
   g_wisdom_dirty = true;
 }
 RealPlanD::~RealPlanD() {
+  Lock lk(g_planner);
   fftw_destroy_plan(static_cast<fftw_plan>(fwd_));
   fftw_destroy_plan(static_cast<fftw_plan>(inv_));
 }
 const RealPlanD& RealPlanD::get(int n) {
-  static std::map<int, std::unique_ptr<RealPlanD>> plans;
+  static std::map<int, std::unique_ptr<RealPlanD>> plans;  // never erased: references stay valid
+  Lock lk(g_planner);
   auto& p = plans[n];
   if (!p) p.reset(new RealPlanD(n));
   return *p;

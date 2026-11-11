@@ -167,7 +167,24 @@ void smooth_like_frames(std::span<const T> v, double frame_s, std::span<T> out) 
     done = std::max(done, b);
   };
   fix_range(0, n - off - 1);  // the start touches the padding
-  for (auto k : gaps) fix_range(k - off, k - off + n);
+  // Per run of missing inputs [g0, g1): outputs [g0 - off, g1 - 1 - off + n) touch it,
+  // and those whose whole window lies inside it, [g0 - off + n - 1, g1 - off), have no
+  // valid weight at all (NaN). Only the edges need renormalising: a missing day costs
+  // 2n windows, not 86400.
+  for (std::size_t gi = 0; gi < gaps.size();) {
+    std::size_t gj = gi;
+    while (gj + 1 < gaps.size() && gaps[gj + 1] == gaps[gj] + 1) ++gj;
+    const std::ptrdiff_t g0 = gaps[gi], g1 = gaps[gj] + 1, in_a = g0 - off + n - 1, in_b = g1 - off;
+    if (in_b > in_a) {
+      fix_range(g0 - off, in_a);
+      for (std::ptrdiff_t i = std::max({in_a, done, std::ptrdiff_t(0)}); i < std::min(in_b, len); ++i) out[std::size_t(i)] = T(NAN);
+      done = std::max(done, in_b);
+      fix_range(in_b, g1 - 1 - off + n);
+    } else {
+      fix_range(g0 - off, g1 - 1 - off + n);
+    }
+    gi = gj + 1;
+  }
   fix_range(len - off, len);  // the end touches the padding
 }
 
