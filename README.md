@@ -5,8 +5,8 @@ background sounds that people rarely notice. Four signals are planned:
 
 1. [**Grid hum**](#1-grid-hum-enf): the mains frequency gives the power grid and the exact UTC second.
 2. [**Aircraft**](#2-aircraft)
-3. [**Trains**](#3-trains)
-4. [**Church bells**](#4-church-bells)
+3. [**Church bells**](#3-church-bells)
+4. [**Emergency sirens**](#4-emergency-sirens)
 
 Only the grid hum is implemented. The other three narrow the location down within a grid once
 the hum has fixed the time.
@@ -214,9 +214,9 @@ station. Details: [`docs/grids/seismic_australia.md`](docs/grids/seismic_austral
 
 ## 2. Aircraft
 
-## 3. Trains
+## 3. Church bells
 
-## 4. Church bells
+## 4. Emergency sirens
 
 ---
 
