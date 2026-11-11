@@ -36,7 +36,7 @@ asio::awaitable<MonthData> seismic_fetch(Ctx& c, const seismic::Network& net, co
   log("  " + name + " " + month + ": tracking the " + std::to_string(int(net.mains_hz)) + " Hz hum at the best-scoring " + net.archive + " stations ...");
   seismic::MonthResult r;
   try {
-    // A partial month fetched again downloads only what it lacks: the 6 h chunks whose
+    // A partial month fetched again downloads only what it lacks: the chunks whose
     // downloads failed last time and those past where it stopped (the current month).
     // Without that record (older entries), every chunk not stored yet.
     std::set<i64> retry;
@@ -51,7 +51,11 @@ asio::awaitable<MonthData> seismic_fetch(Ctx& c, const seismic::Network& net, co
     r = co_await seismic::fetch_month(
         c.http, net, month,
         [&](i64 a, i64 b) {
-          if (fetched_to >= 0) return !retry.contains(a) && b <= fetched_to;
+          // (any failed chunk start inside [a, b): stored chunks may be shorter than today's)
+          if (fetched_to >= 0) {
+            auto it = retry.lower_bound(a);
+            return (it == retry.end() || *it >= b) && b <= fetched_to;
+          }
           return already_have(c, grid, month, a, b);
         });
   } catch (const seismic::NoData& e) {

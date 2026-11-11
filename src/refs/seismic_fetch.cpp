@@ -28,8 +28,12 @@ namespace {
 constexpr const char* DATASELECT = "https://service.earthscope.org/fdsnws/dataselect/1/query";
 constexpr const char* SHAKE_DATASELECT = "https://data.raspberryshake.org/fdsnws/dataselect/1/query";
 constexpr i64 CHUNK_S = 6 * 3600;  // one request per station and 6 h
+// Raspberry Shake: one request per station-day. The archive streams ~0.5 MB/s per request
+// whatever its length but answers 429 past ~one request every 1.5-2 s, so a day per request
+// moves 4x the data under the same limit (and a quarter of the padding).
+constexpr i64 SHAKE_CHUNK_S = 24 * 3600;
 constexpr int SHAKE_IN_FLIGHT = 10;  // Raspberry Shake requests in flight (see fetch_month)
-constexpr int PROBE_EVERY = 4;     // Raspberry Shake: one chunk a day first (see fetch_month)
+constexpr i64 PROBE_S = 24 * 3600;  // Raspberry Shake: one chunk a day first (see fetch_month)
 constexpr i64 PAD_S = 10;          // frame half-length + filter, either side
 
 namespace east_table {
@@ -435,6 +439,8 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   const int base_stations = net.base_stations, max_stations = net.max_stations;
   const std::string name = net.source;
   const bool nyquist = net.nyquist;
+  const i64 chunk_s = nyquist ? SHAKE_CHUNK_S : CHUNK_S;
+  const int probe_every = int(std::max<i64>(1, PROBE_S / chunk_s));
   TrackOptions topt;
   topt.nominal_hz = topt.mains_hz = net.mains_hz;
   topt.robust_floor = net.robust_floor;
@@ -559,7 +565,7 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
     }
     std::map<std::size_t, int> seen;
     std::vector<Job> probe, rest;
-    for (auto& j : jobs) (seen[j.st]++ % PROBE_EVERY == 0 ? probe : rest).push_back(j);
+    for (auto& j : jobs) (seen[j.st]++ % probe_every == 0 ? probe : rest).push_back(j);
     co_await run(std::move(probe));
     std::erase_if(rest, [&](const Job& j) { return bytes[pick[j.st]->id] == 0 && !failed_by[j.st]; });
     co_await run(std::move(rest));
@@ -569,8 +575,8 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   const std::size_t base = std::min<std::size_t>(std::size_t(base_stations), pick.size());
   std::vector<std::pair<i64, i64>> chunks;  // the ones to fetch
   int skipped = 0;
-  for (i64 a = t0; a < end; a += CHUNK_S) {
-    const i64 b = std::min(a + CHUNK_S, end);
+  for (i64 a = t0; a < end; a += chunk_s) {
+    const i64 b = std::min(a + chunk_s, end);
     if (skip && skip(a, b)) ++skipped;
     else chunks.push_back({a, b});
   }
