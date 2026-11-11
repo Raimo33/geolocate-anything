@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 #include <iostream>
 #include <map>
@@ -67,6 +68,9 @@ namespace perth_basin_table {
 namespace brazil_table {
 #include "refs/seismic_brazil_stations.inc"
 }
+namespace estonia_table {
+#include "refs/seismic_estonia_stations.inc"
+}
 const std::vector<Station>& cn_south_list() { return cn_south_table::STATIONS; }
 const std::vector<Station>& cn_north_list() { return cn_north_table::STATIONS; }
 const std::vector<Station>& cn_east_list() { return cn_east_table::STATIONS; }
@@ -79,6 +83,7 @@ const std::vector<Station>& west_list() { return west_table::STATIONS; }
 const std::vector<Station>& ercot_list() { return ercot_table::STATIONS; }
 const std::vector<Station>& ips_list() { return ips_table::STATIONS; }
 const std::vector<Station>& brazil_list() { return brazil_table::STATIONS; }
+const std::vector<Station>& estonia_list() { return estonia_table::STATIONS; }
 
 std::string iso(double t) {
   const i64 s = i64(std::floor(t));
@@ -153,13 +158,20 @@ asio::awaitable<std::string> es_bearer(net::Http& http) {
 // transport errors are retried as Retry-After says, else with a doubling wait (15 s up
 // to 10 min), for up to an hour in all. Other 4xx answers won't change and throw at once.
 // The Raspberry Shake archive refuses bursts (429 after ~20 requests at 10 a second, none
-// at 2 a second): its requests start at most every second in a process, so two
-// processes stay within the limit. Called on the event loop only.
+// in a short run at 2 a second) and, over a sustained run, refuses well under one a
+// second as well (2026-11-11: ten requests in flight at one a second ran into 429s and
+// the backfill stalled behind back-offs). Requests start at most every `shake_gap` in a
+// process: 1 s, stretched by half at every 429 (up to 8 s) and shortened by 2% at every
+// answer, so a process settles at the rate the archive takes. Event loop only.
+double shake_gap = 1.0;
+void shake_feedback(bool refused) {
+  shake_gap = refused ? std::min(8.0, shake_gap * 1.5) : std::max(1.0, shake_gap * 0.98);
+}
 asio::awaitable<void> shake_pace() {
   static std::chrono::steady_clock::time_point next{};
   const auto now = std::chrono::steady_clock::now();
   const auto at = std::max(now, next);
-  next = at + std::chrono::milliseconds(1000);
+  next = at + std::chrono::milliseconds(std::lround(shake_gap * 1000));
   if (at > now) co_await net::sleep_for(std::chrono::duration<double>(at - now).count());
 }
 
@@ -172,6 +184,8 @@ asio::awaitable<net::Response> get_patiently(net::Http& http, const std::string&
     if (earthscope)  // the account's token goes to EarthScope only
       if (std::string auth = co_await es_bearer(http); !auth.empty()) rq.headers.push_back(std::move(auth));
     net::Response r = co_await http.fetch(std::move(rq));
+    const bool shake = url.starts_with(SHAKE_DATASELECT);
+    if (shake && r.error.empty()) shake_feedback(r.status == 429);
     if (r.ok() || (r.error.empty() && r.status == 204)) co_return r;
     if (earthscope && r.error.empty() && r.status == 401 && attempt < 2) {  // token revoked or expired early: get a new one
       es_auth().access.clear();
@@ -185,8 +199,13 @@ asio::awaitable<net::Response> get_patiently(net::Http& http, const std::string&
     double delay = std::min(600.0, (earthscope ? 15.0 : 5.0) * double(1 << std::min(attempt, 6)));
     const std::string ra = r.header("retry-after");
     if (!ra.empty() && std::all_of(ra.begin(), ra.end(), ::isdigit)) delay = std::clamp(std::stod(ra), 1.0, 1800.0);
+    if (shake) {  // the shared pace does the waiting: a short pause, then a turn like any request
+      delay = 5;
+      std::fprintf(stderr, "  [shake] %s, retrying; requests now %.1f s apart\n", why.c_str(), shake_gap);
+    }
     waited += delay;
     co_await net::sleep_for(delay);
+    if (shake) co_await shake_pace();
   }
 }
 
@@ -326,8 +345,26 @@ const Network& brazil() {
   }();
   return n;
 }
+// IPS/UPS again, 2015-05..2025-02, from Estonia, which was part of it until the Baltic
+// states left on 2025-02-08 07:08 UTC: the Estonian national network (EE, at GEOFON)
+// records at 250 samples/s with GPS time, so the 50 Hz line is read directly. Its sites
+// hum by spells (mostly at night), several at once at times; none is believed alone. The
+// stations renamed in 2023 (EE01 -> NOPE, EE03 -> TOSE, EE07 -> PISE, EE08 -> SRGE) stay
+// at their sites, so stations within a kilometre count as one site.
+const Network& estonia() {
+  static const Network n = [] {
+    Network n{"seismic_estonia", 50, "2015-05", 0.02f, 4, 6, false, &estonia_list};
+    n.archive = "GEOFON";
+    n.dataselect = "https://geofon.gfz.de/fdsnws/dataselect/1/query";
+    n.licence = "GEOFON open FDSN data, network EE: Estonian National Seismic Network, Geological Survey of Estonia (doi:10.14470/RR425351)";
+    n.same_site_km = 1.0f;
+    n.until = 1738998480;  // 2025-02-08 07:08:00 UTC (the Baltic grids' own recorders, osf_baltic)
+    return n;
+  }();
+  return n;
+}
 const Network* network(std::string_view source) {
-  for (const Network* n : {&east(), &west(), &ercot(), &ips(), &cn_south(), &cn_north(), &cn_east(), &cn_southwest(), &swis(), &darwin(), &perth_basin(), &brazil()})
+  for (const Network* n : {&east(), &west(), &ercot(), &ips(), &cn_south(), &cn_north(), &cn_east(), &cn_southwest(), &swis(), &darwin(), &perth_basin(), &brazil(), &estonia()})
     if (source == n->source) return n;
   return nullptr;
 }
@@ -344,7 +381,8 @@ std::vector<std::string> months(const Network& net) {
       last = std::max(last, month_key(days_from_civil(y, unsigned(m), unsigned(d)) * 86400 - 1));  // `to` is exclusive
     }
   }
-  const std::string now = month_key(i64(now_seconds()));
+  std::string now = month_key(i64(now_seconds()));
+  if (net.until) now = std::min(now, month_key(net.until));
   auto all = months_between(std::max(first, std::string(net.first_month)), open ? now : std::min(now, last));
   if (net.skip_from && net.skip_to) std::erase_if(all, [&](const std::string& m) { return m >= net.skip_from && m <= net.skip_to; });
   return all;
@@ -380,7 +418,11 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   auto [t0, t1] = month_bounds(month);
   const i64 now = i64(now_seconds());
   if (t0 > now) throw NoData(month + " is in the future");
-  const i64 end = std::min(t1, now - 3600);  // the archive lags real time
+  i64 end = std::min(t1, now - 3600);  // the archive lags real time
+  if (net.until) {
+    if (net.until <= t0) throw NoData(month + " is after " + name + "'s stations left the grid");
+    end = std::min(end, net.until);
+  }
   const int year = std::stoi(month.substr(0, 4));
   const std::string d0 = day_of(t0), d1 = day_of(t1 - 1);
   // The best-scoring stations whose epoch overlaps the month.
@@ -579,7 +621,7 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
     for (i64 a : failed_chunks) rc.push_back(a);
     out.meta["retry_chunks"] = std::move(rc);
   }
-  if (t1 > end || !failed_chunks.empty()) out.meta["partial"] = true;
+  if (end < (net.until ? std::min(t1, net.until) : t1) || !failed_chunks.empty()) out.meta["partial"] = true;
   co_return out;
 }
 
