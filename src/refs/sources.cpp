@@ -173,6 +173,8 @@ std::vector<Source>& table() {
                   "EarthScope / FDSN open data", true, 1},  // one month at a time: 4 connections, EarthScope allows 5
                  &net_fetch<&seismic::east>, &net_months<&seismic::east>, 2, {}});
     v.back().needs_env = "GEOLOC_EARTHSCOPE_REFRESH_TOKEN";  // the anonymous quota cannot backfill
+    // 2026-11-12 rescreen (docs/grids/seismic_east.md): new stations and scores for these years.
+    v.back().month_formats = {{"2010-01", "2013-12", 3}};
     v.push_back({{"seismic_west", {"us_western"},
                   "Mains hum in EarthScope accelerometer/seismometer recordings (GPS-timed), US Western Interconnection, 1 s, "
                   "stations fused by agreement; the months AESO's measured series covers (2019-01..2025-07) are left out "
@@ -276,9 +278,13 @@ Source* source(const std::string& name) {
   return nullptr;
 }
 
-int current_format(const std::string& src) {
+int current_format(const std::string& src, const std::string& month) {
   auto* s = source(src);
-  return s ? s->format : 1;
+  if (!s) return 1;
+  int f = s->format;
+  for (auto& [from, to, mf] : s->month_formats)
+    if (month >= from && month <= to) f = std::max(f, mf);
+  return f;
 }
 
 // ---------------------------------------------------------------- storing
@@ -316,7 +322,7 @@ void store_month(const std::string& src, const std::string& grid, const std::str
     for (auto& nm : months_between(month_key(lo), month_key(hi - 1)))
       if (nm != m) touched.insert(nm);
   }
-  meta["format"] = current_format(src);
+  meta["format"] = current_format(src, m);
   store::write_entry(grid, src, m, meta);
   for (auto& nm : touched) store::refresh_coverage(grid, src, nm);  // neighbours with a manifest entry
   char b[64];
@@ -349,10 +355,12 @@ std::vector<SourceInfo> sources() {
 }
 namespace testing {
 void add_fake_source(SourceInfo info, std::function<FakeMonth(const std::string&, const std::string&)> fetch,
-                     std::function<std::vector<std::string>(const std::string&)> months, int format) {
+                     std::function<std::vector<std::string>(const std::string&)> months, int format,
+                     std::vector<std::tuple<std::string, std::string, int>> month_formats) {
   Source s;
   s.info = std::move(info);
   s.format = format;
+  s.month_formats = std::move(month_formats);
   s.fetch = [fetch](Ctx&, const std::string& grid, const std::string& month) -> asio::awaitable<MonthData> {
     FakeMonth f = fetch(grid, month);
     MonthData md;
@@ -476,7 +484,7 @@ std::vector<PlacementIssue> placement_issues(const std::string& src, const std::
 bool is_cached(const std::string& src, const std::string& grid, const std::string& month) {
   auto info = store::month_info(grid, src, month);
   if (!info || jbool(*info, "partial")) return false;
-  return jint(*info, "format", 1) >= current_format(src);
+  return jint(*info, "format", 1) >= current_format(src, month);
 }
 
 std::vector<std::string> stale_months(const std::string& grid, const std::string& src) {
@@ -515,7 +523,8 @@ std::vector<std::pair<std::string, std::vector<std::string>>> refresh_plan(const
           std::set<std::string> months;
           for (auto& m : available)
             if (!is_cached(s.info.name, grid, m) &&
-                (!gone || !gone->contains(m) || !unavailable_stands(gone->at(m)) || (s.info.live && m >= recent.key())))
+                (!gone || !gone->contains(m) || !unavailable_stands(gone->at(m)) ||
+                 jint(gone->at(m), "format", 1) < current_format(s.info.name, m) || (s.info.live && m >= recent.key())))
               months.insert(m);
           for (auto& m : stale_months(grid, s.info.name)) months.insert(m);
           if (!months.empty()) plan.emplace_back(s.info.name, std::vector<std::string>(months.begin(), months.end()));
@@ -553,7 +562,7 @@ std::vector<std::string> fetch(const std::string& src_name, const std::string& g
       if (!force)
         for (auto& g : src->info.joint ? src->info.grids : std::vector<std::string>{grid})
           if (auto info = store::month_info(g, src_name, m);
-              info && jbool(*info, "partial") && jint(*info, "format", 1) >= current_format(src_name)) {
+              info && jbool(*info, "partial") && jint(*info, "format", 1) >= current_format(src_name, m)) {
             auto [t0, t1] = month_bounds(m);
             c.have[{g, m}] = store::read(g, t0, t1, {src_name});
           }
@@ -567,7 +576,7 @@ std::vector<std::string> fetch(const std::string& src_name, const std::string& g
         }
       } catch (const Unavailable& e) {
         log("[" + src_name + "] " + grid + " " + m + ": unavailable (" + e.what() + ")");
-        store::mark_unavailable(grid, src_name, m, e.what());
+        store::mark_unavailable(grid, src_name, m, e.what(), current_format(src_name, m));
       } catch (const std::exception& e) {  // one bad month must not lose the others; retried next time
         log("[" + src_name + "] " + grid + " " + m + ": FAILED (" + e.what() + ")");
         if (failed) (*failed)[m] = e.what();

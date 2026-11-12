@@ -6,10 +6,10 @@
 
 #include <functional>
 #include <map>
-#include <tuple>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "util/json.hpp"
@@ -99,7 +99,8 @@ struct FakeMonth {
 };
 // Registers a source whose months come from fetch (throw Unavailable for "no data").
 void add_fake_source(SourceInfo info, std::function<FakeMonth(const std::string& grid, const std::string& month)> fetch,
-                     std::function<std::vector<std::string>(const std::string& grid)> months, int format = 1);
+                     std::function<std::vector<std::string>(const std::string& grid)> months, int format = 1,
+                     std::vector<std::tuple<std::string, std::string, int>> month_formats = {});
 void remove_fake_sources();
 }  // namespace testing
 

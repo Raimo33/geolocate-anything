@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -70,6 +71,10 @@ struct Source {
   // The environment variable (an account's token) the source needs to be refreshed at
   // all; without it refresh plans leave the source alone (explicit fetches still run).
   const char* needs_env = nullptr;
+  // Months to fetch again although their format is current: {from, to, format} raises the
+  // format those months need (a station table rescreened for a span of years). Months
+  // stored, or marked unavailable, before that are fetched again.
+  std::vector<std::tuple<std::string, std::string, int>> month_formats;
 };
 
 // A file several months share (a campaign CSV, a yearly archive): read once per process

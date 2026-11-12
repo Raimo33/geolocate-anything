@@ -202,6 +202,20 @@ TEST_F(Fetch, RefreshPlanBackfillsWholeArchive) {
   EXPECT_EQ(plan, want);
 }
 
+TEST_F(Fetch, RescreenedMonthsAreFetchedAgain) {
+  auto none = [](const std::string&, const std::string&) -> refs::testing::FakeMonth { throw std::runtime_error("unused"); };
+  refs::testing::add_fake_source({"x", {"testgrid"}, "t", "t", false, 4}, none,
+                                 [](const std::string&) { return months_between("2012-01", "2012-04"); }, 2, {{"2012-02", "2012-03", 3}});
+  for (const char* m : {"2012-01", "2012-02"}) store::save_month("testgrid", "x", m, zeros(m), {{"format", 2}});
+  store::mark_unavailable("testgrid", "x", "2012-03", "none", 2);  // fresh, but from before the rescreen
+  store::mark_unavailable("testgrid", "x", "2012-04", "none", 2);  // outside the range: stands
+  auto plan = refs::refresh_plan("testgrid", utc("2026-11-05"));
+  EXPECT_EQ(plan, (decltype(plan){{"x", {"2012-02", "2012-03"}}}));
+  store::save_month("testgrid", "x", "2012-02", zeros("2012-02"), {{"format", 3}});
+  store::mark_unavailable("testgrid", "x", "2012-03", "none", 3);
+  EXPECT_TRUE(refs::refresh_plan("testgrid", utc("2026-11-05")).empty());
+}
+
 TEST_F(Fetch, UnlistableSourceIsReportedAndItsStaleMonthsStillPlanned) {
   auto none = [](const std::string&, const std::string&) -> refs::testing::FakeMonth { throw std::runtime_error("unused"); };
   refs::testing::add_fake_source({"x", {"testgrid"}, "t", "t", true, 4}, none,

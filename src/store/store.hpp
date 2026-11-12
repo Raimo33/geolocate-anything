@@ -77,7 +77,7 @@ void write_entry(const std::string& grid, const std::string& source, const std::
 // write_range for one whole month + its manifest entry.
 void save_month(const std::string& grid, const std::string& source, const std::string& month, std::span<const float> values,
                 const json::object& meta);
-void mark_unavailable(const std::string& grid, const std::string& source, const std::string& month, std::string_view reason);
+void mark_unavailable(const std::string& grid, const std::string& source, const std::string& month, std::string_view reason, int format = 1);
 void refresh_coverage(const std::string& grid, const std::string& source, const std::string& month);
 
 // ---------------------------------------------------------------- reading

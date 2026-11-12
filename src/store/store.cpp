@@ -353,12 +353,13 @@ void save_month(const std::string& grid, const std::string& source, const std::s
   write_entry(grid, source, month, meta);
 }
 
-void mark_unavailable(const std::string& grid, const std::string& source, const std::string& month, std::string_view reason) {
+void mark_unavailable(const std::string& grid, const std::string& source, const std::string& month, std::string_view reason, int format) {
   update_manifest(grid, source, [&](json::object& man) {
     if (!man["unavailable"].is_object()) man["unavailable"] = json::object();
     json::object e;
     e["checked_at"] = now_isoformat();
     e["reason"] = std::string(reason.substr(0, 200));
+    e["format"] = format;
     man["unavailable"].get_object()[month] = std::move(e);
   });
 }

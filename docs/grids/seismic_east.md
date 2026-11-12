@@ -128,8 +128,9 @@ with LD.TBR (from 2012 they agree only with each other, a shared non-grid tone),
 New channels: YC.IP04, YC.IP06, CN.MCA3, NQ.ETX02. Re-scored: LD.PAL `HNZ`, YSLD,
 RSTON, LWRD, MANY, TBR, BGR (2010–2013), and LD.PAL `EHZ`, MSNY, BVD, NED set to 0 from
 2010. Windows still without two agreeing sites: 2012-03 (PAL alone or quiet in all four
-probes), and some evening probes of 2011-12..2012-02 (PAL alone). The months are refilled
-with `geoloc refs fetch seismic_east --grid us_eastern --months 2010-01:2013-12 --force`.
+probes), and some evening probes of 2011-12..2012-02 (PAL alone). These months need format 3
+(`month_formats` in `src/refs/sources.cpp`), so the next refresh fetches them again, the ones
+marked unavailable included.
 
 The same weakness shows elsewhere: the all-channel screen of 2015-06-15 (a 60–78% month)
 found 30-odd Eastern channels humming, many unlisted (GS.KAN05/06/08/13/17 in Kansas,
