@@ -258,9 +258,10 @@ double km_apart(const Station& a, const Station& b) {
 }  // namespace
 
 // US Eastern: dense and steady, so the three best stations carry a month and a very quiet
-// one may stand alone.
+// one may stand alone. Up to five reserves: in thin years (2012) the third and fourth
+// pick are often silent, and 2012-06 rose from 61% to 75% with the reserves 6-8.
 const Network& east() {
-  static const Network n{"seismic_east", 60, "", 0.9f, 3, 5, true, &east_list};
+  static const Network n{"seismic_east", 60, "", 0.9f, 3, 8, true, &east_list};
   return n;
 }
 // US Western, from 2001-09 (the first month EarthScope holds two listed stations). AESO's

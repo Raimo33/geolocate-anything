@@ -45,9 +45,9 @@ networks.
 ## Station choice per month
 
 Each station is scored by its correlation in the nearest
-screened year (penalised by 0.9 if more than 3 years away). Up to five stations with a
+screened year (penalised by 0.9 if more than 3 years away). Up to eight stations with a
 score ≥ 0.9 are chosen, at most one channel per site. The best three are fetched for the
-whole month; the other two are fetched only for 6-hour chunks in which fewer than three
+whole month; the others are fetched only for 6-hour chunks in which fewer than three
 stations supported the fused value.
 
 ## Tracking a station
