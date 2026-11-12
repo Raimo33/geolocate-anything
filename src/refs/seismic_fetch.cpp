@@ -363,7 +363,7 @@ const Network& perth_basin() {
 // 100 samples/s channels fold the 60 Hz line to 40 Hz. BL.CAM1 is an input with no live
 // sensor that carries the hum at ~45 dB; BL.CAM4, a working seismometer on another input,
 // carries it more weakly and confirms it when it can. With one site there is nobody else
-// to ask, so CAM1 stands alone when CAM4 is too weak (docs/grids/seismic_brazil.md).
+// to ask, so CAM1 stands alone when CAM4 is too weak (docs/grids/seismic.md#brazil-seismic_brazil).
 const Network& brazil() {
   static const Network n = [] {
     Network n{"seismic_brazil", 60, "2004-02", 0.0f, 2, 2, true, &brazil_list};

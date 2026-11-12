@@ -88,22 +88,22 @@ refs/<grid>/<source>/manifest.json    provenance, licence, per-month coverage, r
   quota used when `GEOLOC_EARTHSCOPE_REFRESH_TOKEN` is set (without it, refreshes leave
   the source alone: the anonymous quota cannot backfill). A month with failed downloads
   is stored as *partial* with its failed chunks listed, and the next fetch downloads only
-  those. The full method and its validation are in [seismic_east.md](seismic_east.md).
+  those. The full method and its validation are in [seismic.md#us-eastern-seismic_east](seismic.md#us-eastern-seismic_east).
 * **US Western and ERCOT likewise** (`seismic_west`, `seismic_ercot`): the same code and
   account. Western covers 2001-09..2018-12 and 2025-08 on, leaving AESO's months out;
   ERCOT covers 2014-02 on. Both rank below the measured recorders and store a second
   only where two sites agree (ERCOT from 2015-02)
-  ([seismic_west.md](seismic_west.md), [seismic_ercot.md](seismic_ercot.md)).
+  ([seismic.md#us-western-seismic_west](seismic.md#us-western-seismic_west), [seismic.md#ercot-seismic_ercot](seismic.md#ercot-seismic_ercot)).
 * **IPS/UPS likewise, from 2022-10** (`seismic_ips`): the same code at 50 Hz over nine
   strong-motion stations in Azerbaijan, Kazakhstan and Kyrgyzstan, 4 per month plus up
   to 2 reserves, and no station accepted alone. It shares the EarthScope account with
   `seismic_east`, so the two grids refresh one after the other
-  ([seismic_ips.md](seismic_ips.md)).
+  ([seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips](seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips)).
 * **Brazil, 2004-02..2008-08** (`seismic_brazil`): the same code on two 100 samples/s
   channels of one recorder in the University of São Paulo's own FDSN archive (no
   account). A fixed tone beside the hum sits among the noise probes, so this network
   takes the median of the probes as its noise floor; one channel may stand alone
-  ([seismic_brazil.md](seismic_brazil.md)).
+  ([seismic.md#brazil-seismic_brazil](seismic.md#brazil-seismic_brazil)).
 
 ### Data repairs found by cross-checking (all automatic, recorded in the manifest)
 

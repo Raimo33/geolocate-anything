@@ -74,7 +74,7 @@ const std::map<std::string, Location> EDR_LOCATIONS = {
 };
 
 // Recorders whose clock was not on UTC, as the GPS-timed Estonian seismometers show
-// (seismic_estonia; docs/grids/seismic_estonia.md). KIT's files put every recorder on one
+// (seismic_estonia; docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia). KIT's files put every recorder on one
 // time axis, and the Karlsruhe column beside Tallinn's follows Continental Europe's
 // measured series at lag 0, but Tallinn's own column (2019-03-25..04-17) runs late by an
 // offset that grows by 1.2-2.3 s a day, from 19 s on 2019-03-29 to 55 s on 04-17. The

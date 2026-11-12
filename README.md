@@ -19,14 +19,7 @@ Documentation:
 - [`docs/grids/architecture.md`](docs/grids/architecture.md): design and evaluation
 - [`docs/grids/datasets.md`](docs/grids/datasets.md): grid data sources
 - [`docs/grids/compression.md`](docs/grids/compression.md): reference store format
-- [`docs/grids/seismic_east.md`](docs/grids/seismic_east.md): US Eastern frequency from seismometer hum
-- [`docs/grids/seismic_west.md`](docs/grids/seismic_west.md): US Western frequency (2001–2018, 2025-08 on) from seismometer hum
-- [`docs/grids/seismic_ercot.md`](docs/grids/seismic_ercot.md): ERCOT (Texas) frequency (2014 on) from seismometer hum
-- [`docs/grids/seismic_ips.md`](docs/grids/seismic_ips.md): IPS/UPS (Russia and neighbours) frequency from seismometer hum
-- [`docs/grids/seismic_estonia.md`](docs/grids/seismic_estonia.md): IPS/UPS in 2015–2025 from Estonian seismometers, and the KIT Tallinn clock fix
-- [`docs/grids/seismic_china.md`](docs/grids/seismic_china.md): China's grids from Raspberry Shake hum
-- [`docs/grids/seismic_brazil.md`](docs/grids/seismic_brazil.md): Brazil's grid frequency (2004–2008) from seismometer hum
-- [`docs/grids/seismic_australia.md`](docs/grids/seismic_australia.md): Western Australia's South West grid (2017, 2022 on) and Darwin from seismometer hum
+- [`docs/grids/seismic.md`](docs/grids/seismic.md): grid frequency from seismometer hum (US Eastern, US Western, ERCOT, IPS/UPS, China, Western Australia and Darwin, Brazil)
 - [`docs/metadata/architecture.md`](docs/metadata/architecture.md): time zone from the metadata clock (step 7)
 - [`docs/metadata/datasets.md`](docs/metadata/datasets.md): time-zone data for the metadata clue (step 7)
 
@@ -97,7 +90,7 @@ All series are stored at 1 s resolution, rounded to 1 mHz.
 | US Western | `aeso` | 2019-01 → 2025-07 | Alberta system frequency, 2 s. | UTC column runs 3 s late; corrected. |
 | US Western | `osf_edr` | 2019-05, 2024-01..11 | KIT GPS recorders in Colorado and Salt Lake City. | — |
 | US Western | `lbnl_upmu` | 2015-10-01 → 12 | LBNL micro-PMU in Berkeley, derived from the 120 Hz voltage angle. | — |
-| US Eastern | `seismic_east` | 2001-09 → today | Reconstructed from the 60 Hz hum in GPS-timed seismometers; 3–5 stations fused. See [below](#us-eastern-grid-frequency-from-seismometer-hum). | Weak months refetched 2026-11-12 after a rescreen: 2012 now 67% (was 1%), 2013 91% (was 41%), 2010–2011 97–98%, other years 92–100% except 2001 (76%). Still under 90%: 2001-09/12, 2002-01..05, 2003-09, 2004-11, 2010-03, 2011-12..2012-06, 2012-10..2013-01, 2013-03, 2015-04/05, 2016-02, 2017-10, 2021-10/11 ([details](docs/grids/seismic_east.md#rescreen-of-20102013-2026-11-12)). |
+| US Eastern | `seismic_east` | 2001-09 → today | Reconstructed from the 60 Hz hum in GPS-timed seismometers; 3–5 stations fused. See [below](#us-eastern-grid-frequency-from-seismometer-hum). | Weak months refetched 2026-11-12 after a rescreen: 2012 now 67% (was 1%), 2013 91% (was 41%), 2010–2011 97–98%, other years 92–100% except 2001 (76%). Still under 90%: 2001-09/12, 2002-01..05, 2003-09, 2004-11, 2010-03, 2011-12..2012-06, 2012-10..2013-01, 2013-03, 2015-04/05, 2016-02, 2017-10, 2021-10/11 ([details](docs/grids/seismic.md#rescreen-of-20102013-2026-11-12)). |
 | US Eastern | `osf_edr` | 2023-06/07 | KIT recorder in Florida. | Not GPS-locked: drifts −4 s to −13 s against `seismic_east`, so it ranks below it. |
 | ERCOT (Texas) | `seismic_ercot` | 2014-02 → today; days of 2009 | Reconstructed from the 60 Hz hum in GPS-timed seismometers in Dallas–Fort Worth and the Permian Basin; from 2015-02 only seconds on which two sites agree. See [below](#us-western-and-ercot-grid-frequency-from-seismometer-hum). | No station for 2012–2013. One site (Azle) carries most of 2014. Excursions beyond ±250 mHz (2021-02-15) are not tracked. |
 | ERCOT (Texas) | `ercot_etts` | ~150 days of 2011–12 | ERCOT EMS system frequency, 4 s. | — |
@@ -106,13 +99,13 @@ All series are stored at 1 s resolution, rounded to 1 mHz.
 | Southern Africa | `pmu_zenodo` | 2025-04-28 → 2025-12 | PMU in Stellenbosch, 1 s. | — |
 | Japan East (50 Hz) | `dtu_tokyo` | 42 days of 2017, 317 of 2020 | DTU recorder in Tokyo, 0.5 s (CC BY-NC-ND). | — |
 | IPS/UPS (Russia & neighbours) | `seismic_ips` | 2022-10 → today (gaps) | Reconstructed from the 50 Hz hum in GPS-timed strong-motion stations in Azerbaijan, Kazakhstan and Kyrgyzstan; only seconds on which two sites agree. See [below](#ipsups-grid-frequency-from-seismometer-hum). | Stations hum only part of the time: 98% of 2025-04 is stored, 74% of 2023-01, 6–15% of the months of 2023-03..2024-10 tried. Sites can differ by up to ~2 s. |
-| IPS/UPS (Russia & neighbours) | `seismic_estonia` | 2015-05 → 2025-02-08 (gaps) | Reconstructed from the 50 Hz hum in the Estonian national seismic network (250 samples/s, GPS-timed) while the Baltic states were part of IPS/UPS; only seconds on which two sites agree. See [`docs/grids/seismic_estonia.md`](docs/grids/seismic_estonia.md). | Sites hum by spells, mostly at night: 4–25% of the seconds of the months checked. ~1 s ahead of KIT's recorders (r 0.95–0.996, 2.7 mHz RMS against Kaunas/Tallinn 2025). |
+| IPS/UPS (Russia & neighbours) | `seismic_estonia` | 2015-05 → 2025-02-08 (gaps) | Reconstructed from the 50 Hz hum in the Estonian national seismic network (250 samples/s, GPS-timed) while the Baltic states were part of IPS/UPS; only seconds on which two sites agree. See [`docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia`](docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia). | Sites hum by spells, mostly at night: 4–25% of the seconds of the months checked. ~1 s ahead of KIT's recorders (r 0.95–0.996, 2.7 mHz RMS against Kaunas/Tallinn 2025). |
 | IPS/UPS (Russia & neighbours) | `osf_edr` | 2019-03-29 → 2019-04-17, 2019-04-30 → 05-11 | KIT recorders in Tallinn and St. Petersburg, 1 s. | Tallinn's clock ran 19–55 s late, growing by 1–2 s a day: corrected against `seismic_estonia`, its first four days dropped. |
 | China Southern (with Hong Kong, Macau) | `seismic_cn_south` | 2019-07 → 2025-12 (gaps; 326 days in all) | Reconstructed from the 50 Hz hum in Raspberry Shake geophones in Hong Kong and Guangdong. The line sits on the Nyquist frequency of their 100 samples/s; a decoder recovers the signed deviation. See [below](#chinas-grid-frequencies-from-raspberry-shake-hum). | 4–7 mHz per station, against 1 mHz for a direct line. Stations hum by spells. |
 | China North & Central | `seismic_cn_north` | 2019-08 → 2020-03, 2022-09 → 2024-09 (483 days) | Same method: Beijing, Tianjin, Ordos. | As above; often one station alone. |
 | China East | `seismic_cn_east` | 2023-10 → 2024-04 (53 days) | Same method: Xuzhou, Xiamen. | As above. |
 | China Southwest | `seismic_cn_southwest` | 2021-03 → 2024-02 (504 days) | Same method: one station in Chongqing. | One station: nothing to confirm it. |
-| Brazil (SIN) | `seismic_brazil` | 2004-02 → 2008-08 (gaps) | Reconstructed from the 60 Hz hum in one University of São Paulo seismic recorder. See [`docs/grids/seismic_brazil.md`](docs/grids/seismic_brazil.md). | One site; clock within ~2 s of UTC, not GPS-timed. |
+| Brazil (SIN) | `seismic_brazil` | 2004-02 → 2008-08 (gaps) | Reconstructed from the 60 Hz hum in one University of São Paulo seismic recorder. See [`docs/grids/seismic.md#brazil-seismic_brazil`](docs/grids/seismic.md#brazil-seismic_brazil). | One site; clock within ~2 s of UTC, not GPS-timed. |
 | IPS/UPS and Baltic island mode | `osf_baltic` | 2025-01-23 → 2025-02-09 | KIT recorders in Kaunas and Tallinn, 0.1 s; covers the whole Baltic island period of 2025-02-08/09. | 1.3 s early; corrected. |
 | Balearic, Iceland, Gran Canaria, Faroe, South Korea, Malaysia, others | `osf_edr`, `kit_zenodo` | days to months each | KIT measurement campaigns. See [`docs/grids/datasets.md`](docs/grids/datasets.md). | — |
 
@@ -126,7 +119,7 @@ No operator publishes per-second frequency for the US Eastern Interconnection.
 `seismic_east` reconstructs it from the 60 Hz mains hum that GPS-timed seismometers and
 accelerometers in buildings pick up, archived openly at EarthScope: 3–5 screened stations
 per month are tracked second by second and fused by agreement. Method, validation and
-coverage: [`docs/grids/seismic_east.md`](docs/grids/seismic_east.md).
+coverage: [`docs/grids/seismic.md#us-eastern-seismic_east`](docs/grids/seismic.md#us-eastern-seismic_east).
 
 ### US Western and ERCOT grid frequency from seismometer hum
 
@@ -140,8 +133,8 @@ the Permian Basin that agree at r = 0.997 over 630 km and are uncorrelated with 
 neighbours. Some strong stations at times carry a line that is not the grid's, so a
 second is stored only where two sites agree (in Texas from 2015-02; before that one site
 stands alone). Neither has been compared with a measured recorder yet. Screening,
-checks and limits: [`docs/grids/seismic_west.md`](docs/grids/seismic_west.md),
-[`docs/grids/seismic_ercot.md`](docs/grids/seismic_ercot.md).
+checks and limits: [`docs/grids/seismic.md#us-western-seismic_west`](docs/grids/seismic.md#us-western-seismic_west),
+[`docs/grids/seismic.md#ercot-seismic_ercot`](docs/grids/seismic.md#ercot-seismic_ercot).
 
 ### IPS/UPS grid frequency from seismometer hum
 
@@ -150,11 +143,11 @@ Asia, the South Caucasus) from 2022-10: `seismic_ips` fuses 200 samples/s strong
 stations 2,000 km apart in Azerbaijan, Kazakhstan and Kyrgyzstan. For 2015-05 to
 2025-02-08, while the Baltic states were still part of the system, `seismic_estonia` does
 the same with the Estonian national network's 250 samples/s stations at GEOFON
-([`docs/grids/seismic_estonia.md`](docs/grids/seismic_estonia.md)); they also showed
+([`docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia`](docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia)); they also showed
 that KIT's 2019 Tallinn recorder ran up to 55 s late, now corrected. Nothing usable was
 found before 2015. Ukraine is part of Continental Europe since 2022-03-16 and is
 matched there. Screening, coverage and what was ruled out:
-[`docs/grids/seismic_ips.md`](docs/grids/seismic_ips.md).
+[`docs/grids/seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips`](docs/grids/seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips).
 
 ### China's grid frequencies from Raspberry Shake hum
 
@@ -171,7 +164,7 @@ agreement does not catch it; most stored seconds rest on one station; coverage f
 when hobbyists' Shakes hum and are switched on. Northeast, Northwest and Yunnan have no
 usable station. The decoding is too costly for the dashboard: these months are
 backfilled offline and pushed to the bucket. Method, validation and coverage:
-[`docs/grids/seismic_china.md`](docs/grids/seismic_china.md).
+[`docs/grids/seismic.md#china-seismic_cn_`](docs/grids/seismic.md#china-seismic_cn_).
 ### Brazil's grid frequency from seismometer hum
 
 Brazil's SIN (60 Hz) has no published frequency data. `seismic_brazil` covers 2004-02 to
@@ -179,7 +172,7 @@ Brazil's SIN (60 Hz) has no published frequency data. `seismic_brazil` covers 20
 University of São Paulo, where the line appears folded to 40 Hz. It is one recorder: a
 second channel confirms the first when its own hum is strong enough, and the clock was
 checked to about 2 s against earthquake arrivals. Details and limits:
-[`docs/grids/seismic_brazil.md`](docs/grids/seismic_brazil.md).
+[`docs/grids/seismic.md#brazil-seismic_brazil`](docs/grids/seismic.md#brazil-seismic_brazil).
 
 ### Western Australia and Darwin from seismometer hum
 
@@ -201,7 +194,7 @@ investigation report times it (the trip at 12:08:30 UTC, 49.0 Hz at 12:10:23, lo
 shedding at 48.75 Hz at 12:12:08; read off the stations' spectra in 30 s windows), which ties the stations to the grid, their
 clocks to UTC and the decoder's sign to a known fall. `seismic_darwin` is one address
 in Darwin, uncorrelated with Perth and checked against nothing. The Pilbara, Mount Isa and Alice Springs have no
-station. Details: [`docs/grids/seismic_australia.md`](docs/grids/seismic_australia.md).
+station. Details: [`docs/grids/seismic.md#western-australia-and-darwin-seismic_swis-seismic_perth_basin-seismic_darwin`](docs/grids/seismic.md#western-australia-and-darwin-seismic_swis-seismic_perth_basin-seismic_darwin).
 
 ### Limits
 

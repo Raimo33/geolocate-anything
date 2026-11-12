@@ -1,4 +1,4 @@
-// Brazil's SIN from the University of São Paulo's archive (docs/grids/seismic_brazil.md): 100 samples/s
+// Brazil's SIN from the University of São Paulo's archive (docs/grids/seismic.md#brazil-seismic_brazil): 100 samples/s
 // short-period channels of one recorder, the 60 Hz line folded to 40 Hz. id, lat, lon, epoch from, to
 // (exclusive), {year, share of that year's screened hours in which the hum agreed with the other channel at
 // r >= 0.99 after 12 s smoothing}. Coordinates are the sensors' sites; the hum is picked up at the recorder.

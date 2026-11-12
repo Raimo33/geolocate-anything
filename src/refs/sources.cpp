@@ -173,7 +173,7 @@ std::vector<Source>& table() {
                   "EarthScope / FDSN open data", true, 1},  // one month at a time: 4 connections, EarthScope allows 5
                  &net_fetch<&seismic::east>, &net_months<&seismic::east>, 2, {}});
     v.back().needs_env = "GEOLOC_EARTHSCOPE_REFRESH_TOKEN";  // the anonymous quota cannot backfill
-    // 2026-11-12 rescreen (docs/grids/seismic_east.md): new stations and scores for these years.
+    // 2026-11-12 rescreen (docs/grids/seismic.md#us-eastern-seismic_east): new stations and scores for these years.
     v.back().month_formats = {{"2010-01", "2013-12", 3}};
     v.push_back({{"seismic_west", {"us_western"},
                   "Mains hum in EarthScope accelerometer/seismometer recordings (GPS-timed), US Western Interconnection, 1 s, "
