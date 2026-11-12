@@ -95,13 +95,47 @@ Share of seconds with a value, 2026-11-09:
 | 2002–2004 | 90–96% | 2002-01..05: 71–88%; 2003-09: 41% |
 | 2005–2007 | 97–99% | — |
 | 2008–2009 | 92–97% | 2008-05: 59%; 2009-10: 87% |
-| 2010 | 88% (8 months) | 2010-01..04: no data archived; 2010-05: 17% |
+| 2010 | 88% (8 months) | 2010-01..04: stored as no data, 2010-05: 17% (station choice; [rescreen](#rescreen-of-20102013-2026-11-12)) |
 | 2011 | 90% | 2011-12: 23% |
-| 2012 | 1% | 2012-01: 19%; 2012-02..12: no station passes the checks |
-| 2013 | 41% | 2013-03, 05..11: 0–49% |
+| 2012 | 1% | 2012-01: 19%; 2012-02..12: stored as no data (station choice; [rescreen](#rescreen-of-20102013-2026-11-12)) |
+| 2013 | 41% | 2013-03, 05..11: 0–49% (station choice; [rescreen](#rescreen-of-20102013-2026-11-12)) |
 | 2014–2015 | 88–96% | 2014-08: 71%; 2015-05..08: 60–78% |
-| 2016–2017 | 90–93% | 2016-02/08/09: 62–69%; 2017-10: 35% |
+| 2016–2017 | 90–93% | 2016-02/08/09: 62–69%; 2017-10: 35% (on 2017-10-15 over a dozen listed sites agree at r ≥ 0.98: refetch) |
 | 2018–2026 | 96–100% | 2021-06/10/11: 70–83% |
+
+## Rescreen of 2010–2013 (2026-11-12)
+
+The 2010–2013 gaps came from the station choice, not from the archive. EarthScope holds
+continuous data for every month of 2010, and stations that hum in 2011 and 2013 hum in 2012
+too. One 15-minute probe a quarter had scored them low in 2012 (LD.PAL `HNZ` 0.23, LD.YSLD
+0.29, NQ.RSTON 0.43), while channels that had gone quiet kept their 2007/2009 scores
+(LD.PAL `EHZ`, MSNY, BVD, NED; their digitisers were replaced in 2009-11 and the folded line
+is gone). The picker took the five best-scored channels, mostly dead ones, so nothing passed.
+
+22 candidate channels were tracked twice a month (the 8th at 05:00 and the 22nd at 17:00
+UTC, 30 min each) from 2010-01 to 2013-12, plus an all-channel screen (every vertical and
+horizontal ≥ 200 samples/s inside the outline) on 2012-04-15 and 2012-06-15. A station's
+yearly score is its best r against another site that year. Pairs at one site, and LD.MANY
+with LD.TBR (from 2012 they agree only with each other, a shared non-grid tone), do not count.
+
+| Months | Sites that agree (r after 12 s smoothing) |
+|---|---|
+| 2010-01..12 | MANY, TBR, PAL `HNZ`, BGR: 0.96–1.00 (PAL with MANY 0.99 on 2010-02-15 and 2010-05-15) |
+| 2011-09..2012-07 | PAL, RSTON, GS.LWRD (to 2012-03), YC.IP04/IP06 (RAMP Virginia aftershock array): 0.96–0.99 |
+| 2012-06..08 | adds CN.MCA3 (McAdam, NB) 0.99–1.00, NQ.ETX02 (East Texas) 0.98 |
+| 2012-08..2013-12 | LD.YSLD (Youngstown) with RSTON and PAL: 0.96–0.99; from 2013-02 NE.WES, from 2013-04 NP.7405, from 2013-11 GS.DEC07/09 |
+
+New channels: YC.IP04, YC.IP06, CN.MCA3, NQ.ETX02. Re-scored: LD.PAL `HNZ`, YSLD,
+RSTON, LWRD, MANY, TBR, BGR (2010–2013), and LD.PAL `EHZ`, MSNY, BVD, NED set to 0 from
+2010. Windows still without two agreeing sites: 2012-03 (PAL alone or quiet in all four
+probes), and some evening probes of 2011-12..2012-02 (PAL alone). The months are refilled
+with `geoloc refs fetch seismic_east --grid us_eastern --months 2010-01:2013-12 --force`.
+
+The same weakness shows elsewhere: the all-channel screen of 2015-06-15 (a 60–78% month)
+found 30-odd Eastern channels humming, many unlisted (GS.KAN05/06/08/13/17 in Kansas,
+YC.LA10 in Louisiana, NQ.NLKCP, horizontals of KY.HEKY), and 2017-10-15 (35%) over a dozen
+listed sites at r ≥ 0.98 (GS.DEC08/09/17, NP.7405, N4.T45B, KY.HZKY, PE.ALL05, NQ.RSTON).
+Screening every month, not once a year, would likely lift the other weak months too.
 
 ## Negative results
 
@@ -135,4 +169,4 @@ Share of seconds with a value, 2026-11-09:
 
 How the hum couples into each instrument; why a station's agreement
 varies from year to year; accuracy against a PMU archive (FNET/GridEye) over a longer
-period; whether older networks extend coverage before 2001 (1975-01..1984-07 were fetched and nothing passed; 1984-08..2000 was not tried, since no listed station existed then); what bridges 2012–2013, between the end of the `LD` short-period era and the stations that track from 2014.
+period; whether older networks extend coverage before 2001 (1975-01..1984-07 were fetched and nothing passed; 1984-08..2000 was not tried, since no listed station existed then); whether monthly screening lifts the remaining weak months (2015, 2016, 2017-10, 2021).
