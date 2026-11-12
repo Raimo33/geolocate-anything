@@ -165,13 +165,15 @@ when hobbyists' Shakes hum and are switched on. Northeast, Northwest and Yunnan 
 usable station. The decoding is too costly for the dashboard: these months are
 backfilled offline and pushed to the bucket. Method, validation and coverage:
 [`docs/grids/seismic.md#china-seismic_cn_`](docs/grids/seismic.md#china-seismic_cn_).
+
 ### Brazil's grid frequency from seismometer hum
 
 Brazil's SIN (60 Hz) has no published frequency data. `seismic_brazil` covers 2004-02 to
 2008-08 from the hum in old 100 samples/s short-period channels archived by the
 University of São Paulo, where the line appears folded to 40 Hz. It is one recorder: a
 second channel confirms the first when its own hum is strong enough, and the clock was
-checked to about 2 s against earthquake arrivals. Details and limits:
+checked to about 2 s against earthquake arrivals. Nothing open was found that carries the
+line after 2008-08: modern digitisers filter it out. Details and limits:
 [`docs/grids/seismic.md#brazil-seismic_brazil`](docs/grids/seismic.md#brazil-seismic_brazil).
 
 ### Western Australia and Darwin from seismometer hum
@@ -208,7 +210,7 @@ station. Details: [`docs/grids/seismic.md#western-australia-and-darwin-seismic_s
   confirmed nor excluded. Japan West, Québec, Taiwan, Australia's Pilbara, Mount Isa and Alice Springs systems and China's Northeast, Northwest and Yunnan grids have no open source; Western Australia's South West grid is covered for 2017-01..06 and from 2022, Darwin by spells, the latter two only where a Raspberry Shake hummed; the other Chinese grids are covered only where a Raspberry Shake hummed; IPS/UPS has none before
   2015-05 and only spells (mostly nights) until 2022-10;
   Australia has no data for 2017-04..2024-11; ERCOT has almost none before 2014 and the
-  US Western Interconnection none before 2001-09.
+  US Western Interconnection none before 2001-09; Brazil is covered only for 2004-02..2008-08.
 
 ---
 
