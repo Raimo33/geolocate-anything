@@ -136,7 +136,13 @@ The same weakness shows elsewhere: the all-channel screen of 2015-06-15 (a 60–
 found 30-odd Eastern channels humming, many unlisted (GS.KAN05/06/08/13/17 in Kansas,
 YC.LA10 in Louisiana, NQ.NLKCP, horizontals of KY.HEKY), and 2017-10-15 (35%) over a dozen
 listed sites at r ≥ 0.98 (GS.DEC08/09/17, NP.7405, N4.T45B, KY.HZKY, PE.ALL05, NQ.RSTON).
-Screening every month, not once a year, would likely lift the other weak months too.
+A vertical-channel screen of every weak month (the 8th at 05:00 and the 22nd at 17:00 UTC,
+20 min, 2026-11-12) added the channels that agree with listed stations at r ≥ 0.97 in two
+windows or more, one or two per cluster: CO.CSB (Charleston), GS.DEC15 (Decatur),
+KY.SOKY, WU.PKRO (Ontario), Y7.PW01 (Pawnee OK), YC.LA10/LA17 (Napoleonville LA),
+YU.S13A (Ithaca NY), Z7.LA13 (NW Louisiana), ZA.WK05/WK06 (Wellington KS), with their
+yearly r (0.97–1.00). The weak months before 2010 (2001-09, 2002-01..05, 2003-09, 2008-05,
+2009-10) showed no unlisted channel: only listed LD stations hum, and in some windows none.
 
 ## Negative results
 
