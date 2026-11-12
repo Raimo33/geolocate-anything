@@ -87,21 +87,24 @@ identically.
 
 ## Coverage
 
-Share of seconds with a value, 2026-11-09:
+Share of seconds with a value, 2026-11-12, after the weak-month backfill (every month below
+95%, and all of 2010–2013, fetched again with the rescreened and newly screened channels):
 
-| Years | Coverage | Weak months |
+| Years | Coverage | Months below 95% |
 |---|---|---|
-| 2001 (09–12) | 76% | 2001-09: 41% |
-| 2002–2004 | 90–96% | 2002-01..05: 71–88%; 2003-09: 41% |
-| 2005–2007 | 97–99% | — |
-| 2008–2009 | 92–97% | 2008-05: 59%; 2009-10: 87% |
-| 2010 | 88% (8 months) | 2010-01..04: stored as no data, 2010-05: 17% (station choice; [rescreen](#rescreen-of-20102013-2026-11-12)) |
-| 2011 | 90% | 2011-12: 23% |
-| 2012 | 1% | 2012-01: 19%; 2012-02..12: stored as no data (station choice; [rescreen](#rescreen-of-20102013-2026-11-12)) |
-| 2013 | 41% | 2013-03, 05..11: 0–49% (station choice; [rescreen](#rescreen-of-20102013-2026-11-12)) |
-| 2014–2015 | 88–96% | 2014-08: 71%; 2015-05..08: 60–78% |
-| 2016–2017 | 90–93% | 2016-02/08/09: 62–69%; 2017-10: 35% (on 2017-10-15 over a dozen listed sites agree at r ≥ 0.98: refetch) |
-| 2018–2026 | 96–100% | 2021-06/10/11: 70–83% |
+| 2001 (09–12) | 76% | 2001-09: 41% (only LD.CRNY/MANY/MSNY exist); 2001-11: 93%; 2001-12: 73% |
+| 2002–2004 | 92–97% | 2002-01..05: 77–89%; 2002-08: 93%; 2003-09: 85% (was 41%); 2004-03: 92%; 2004-11: 83% |
+| 2005–2009 | 97–99% | 2009-03: 92% (2008-05: 59% → 100%) |
+| 2010 | 97% | 2010-03: 89% (2010-01..04 were stored as no data, 2010-05 17%) |
+| 2011 | 98% | 2011-12: 88% (was 24%) |
+| 2012 | 67% (was 1%) | 2012-01..06: 33–75%; 2012-10..12: 53–81% (2012-07..09: 94–98%) |
+| 2013 | 91% (was 41%) | 2013-01: 77%; 2013-03: 42%; 2013-05: 93% |
+| 2014–2015 | 96–99% | 2015-04: 89%; 2015-05: 80%; 2015-06: 93% |
+| 2016–2017 | 96–97% | 2016-02: 73%; 2017-10: 61% (was 35%) |
+| 2018–2026 | 97–100% | 2021-10/11: 88% (2021-06: 70% → 100%) |
+
+The per-month figures before and after the backfill are in the
+[rescreen section](#rescreen-of-20102013-2026-11-12).
 
 ## Rescreen of 2010–2013 (2026-11-12)
 
@@ -131,6 +134,65 @@ RSTON, LWRD, MANY, TBR, BGR (2010–2013), and LD.PAL `EHZ`, MSNY, BVD, NED set 
 probes), and some evening probes of 2011-12..2012-02 (PAL alone). These months need format 3
 (`month_formats` in `src/refs/sources.cpp`), so the next refresh fetches them again, the ones
 marked unavailable included.
+
+**Refetched 2026-11-12.** Coverage before → after (%):
+
+| Month | Before | After | Month | Before | After | Month | Before | After |
+|---|---|---|---|---|---|---|---|---|
+| 2010-01 | 0 | 98.0 | 2011-05 | 96.5 | 97.8 | 2012-09 | 0 | 95.1 |
+| 2010-02 | 0 | 97.4 | 2011-06 | 96.5 | 98.6 | 2012-10 | 0 | 80.8 |
+| 2010-03 | 0 | 89.3 | 2011-07 | 97.7 | 99.2 | 2012-11 | 0 | 71.7 |
+| 2010-04 | 0 | 98.3 | 2011-08 | 97.5 | 99.3 | 2012-12 | 0 | 52.7 |
+| 2010-05 | 17.4 | 97.6 | 2011-09 | 97.0 | 99.7 | 2013-01 | 77.4 | 77.4 |
+| 2010-06 | 96.5 | 96.0 | 2011-10 | 92.6 | 97.1 | 2013-02 | 99.8 | 99.8 |
+| 2010-07 | 99.0 | 99.8 | 2011-11 | 96.7 | 99.8 | 2013-03 | 40.6 | 41.5 |
+| 2010-08 | 99.4 | 99.5 | 2011-12 | 23.6 | 88.2 | 2013-04 | 81.2 | 95.4 |
+| 2010-09 | 98.7 | 99.3 | 2012-01 | 19.6 | 65.1 | 2013-05 | 30.2 | 93.3 |
+| 2010-10 | 99.8 | 98.6 | 2012-02 | 0 | 51.0 | 2013-06 | 14.3 | 97.9 |
+| 2010-11 | 92.5 | 98.3 | 2012-03 | 0 | 38.2 | 2013-07 | 14.5 | 98.4 |
+| 2010-12 | 96.7 | 95.4 | 2012-04 | 0.2 | 51.1 | 2013-08 | 49.2 | 97.0 |
+| 2011-01 | 97.5 | 98.3 | 2012-05 | 0 | 33.4 | 2013-09 | 3.7 | 96.0 |
+| 2011-02 | 97.8 | 99.3 | 2012-06 | 0 | 74.9 | 2013-10 | 0.0 | 95.9 |
+| 2011-03 | 96.4 | 97.5 | 2012-07 | 0 | 93.9 | 2013-11 | 2.7 | 96.3 |
+| 2011-04 | 97.2 | 98.1 | 2012-08 | 0 | 98.5 | 2013-12 | 78.9 | 98.9 |
+
+2012 went from 1% to 67% and 2013 from 41% to 91%. Still under 90%: 2010-03 (MANY, TBR,
+PAL `HNZ`), 2011-12 and 2012-01 (PAL `HNZ`, GS.LWRD, YC.IP06), 2012-02..05 (PAL `HNZ` and
+YC.IP06 only, about 1–1.3 M seconds each: two sites, so every gap in either is a gap in the
+store), 2012-06 (CN.MCA3, PAL, RSTON, IP06, ETX02), 2012-10..12 and 2013-01 (YSLD, RSTON,
+PAL; NE.WES joins in 2013-01), and 2013-03 (YSLD, RSTON, PAL, NP.7405, YC.LA10). NQ.RSTON
+contributed nothing from 2012-01 to 2012-05, and LD.BGR nothing from 2012 on.
+
+The weak months outside 2010–2013 were fetched again the same day, with the channels from
+the vertical-channel screen:
+
+| Month | Before | After | Month | Before | After | Month | Before | After |
+|---|---|---|---|---|---|---|---|---|
+| 2001-09 | 41.0 | 41.0 | 2004-02 | 90.9 | 95.5 | 2014-07 | 90.6 | 97.5 |
+| 2001-11 | 92.9 | 92.9 | 2004-03 | 86.6 | 91.9 | 2014-08 | 71.6 | 99.8 |
+| 2001-12 | 73.2 | 73.2 | 2004-11 | 82.7 | 82.7 | 2015-04 | 88.6 | 89.0 |
+| 2002-01 | 86.5 | 87.6 | 2007-06 | 94.8 | 94.8 | 2015-05 | 76.7 | 80.2 |
+| 2002-02 | 78.5 | 83.6 | 2008-01 | 94.3 | 98.8 | 2015-06 | 72.4 | 93.3 |
+| 2002-03 | 70.9 | 77.2 | 2008-02 | 91.1 | 99.9 | 2015-07 | 60.5 | 98.5 |
+| 2002-04 | 82.2 | 83.4 | 2008-03 | 94.3 | 99.7 | 2015-08 | 78.3 | 99.8 |
+| 2002-05 | 87.5 | 89.2 | 2008-04 | 91.4 | 99.5 | 2015-09 | 87.3 | 98.9 |
+| 2002-08 | 91.8 | 92.5 | 2008-05 | 59.4 | 99.8 | 2016-02 | 62.4 | 72.8 |
+| 2003-08 | 92.8 | 97.3 | 2008-08 | 93.6 | 96.1 | 2016-07 | 91.0 | 100.0 |
+| 2003-09 | 41.0 | 85.4 | 2009-03 | 92.1 | 92.3 | 2016-08 | 68.4 | 100.0 |
+| | | | 2009-09 | 95.0 | 97.9 | 2016-09 | 68.8 | 100.0 |
+| | | | 2009-10 | 87.3 | 95.7 | 2017-04 | 92.2 | 98.0 |
+| | | | 2009-12 | 94.6 | 96.8 | 2017-10 | 35.1 | 60.9 |
+| | | | | | | 2021-06 | 70.2 | 100.0 |
+| | | | | | | 2021-10 | 77.6 | 87.9 |
+| | | | | | | 2021-11 | 83.5 | 88.2 |
+| | | | | | | 2022-08 | 93.6 | 99.6 |
+
+Still under 90% there: 2001-09 and 2001-12 (only LD.CRNY, MANY, MSNY; MSNY gave nothing in
+2001-12), 2002-01..05 (CRNY, MANY, GPD, PAL `EHZ`; MSNY mostly silent, ARNY and TBR gave
+nothing), 2003-09 and 2004-11 (the same LD set), 2015-04/05 (NP.7405, YC.LA10, ZA.WK05/06;
+KY.HZKY, BHKY and GS.KAN16 gave nothing), 2016-02 (YC.LA10/LA17, ZA.WK05), 2017-10
+(KY.BHKY, ZA.WK05, N4.T45B, GS.KAN16; KY.HZKY gave nothing), and 2021-10/11 (KY.HZKY,
+YU.S13A, WU.TOBO, plus GS.DEC01 in 2021-11).
 
 The same weakness shows elsewhere: the all-channel screen of 2015-06-15 (a 60–78% month)
 found 30-odd Eastern channels humming, many unlisted (GS.KAN05/06/08/13/17 in Kansas,
