@@ -14,7 +14,7 @@ publishes frequency:
 | Grid id | Area | Reference |
 |---|---|---|
 | `australia_swis` | South West Interconnected System: Kalbarri to Albany, east to Kalgoorlie (Perth) | `seismic_perth_basin`, 2017-01-25..2017-06 (a direct line); `seismic_swis`, 2022-02 on, one station in 2020 |
-| `darwin_katherine` | Darwin–Katherine Interconnected System | `seismic_darwin`, one station: spells of 2018–2022, 2024-10 on |
+| `darwin_katherine` | Darwin–Katherine Interconnected System | `seismic_darwin`, one station: spells of 2018–2022, 2024-08 on |
 | `pilbara` | North West Interconnected System | none |
 | `mount_isa` | North-West Queensland | none |
 | `alice_springs` | Alice Springs | none |
@@ -195,7 +195,28 @@ in eight years.
 
 The Darwin month was made while its two units, which share an address, still counted
 as two sites; they now count as one, so a later fetch keeps only seconds whose line is
-strong enough to stand alone (13 dB) and will store less.
+strong enough to stand alone (13 dB) and will store less (the backfill below stored
+2026-08 at 26%).
+
+**The backfill** (stored and in the bucket, 2026-11-12; share of each month's seconds
+stored, mean of the months stored):
+
+| Year | `seismic_swis` → `australia_swis` | `seismic_darwin` → `darwin_katherine` |
+|---|---|---|
+| 2018 | – | 3 months (10..12), 0.9% |
+| 2020 | 12 months, 15.1% (one station) | – |
+| 2021 | 1 month, 41.9% (one station) | 9 months (04..12), 6.9% |
+| 2022 | 12 months, 85.8% | 7 months (01..07), 9.4% |
+| 2023 | 12 months, 89.3% | – |
+| 2024 | 12 months, 94.5% | 5 months (08..12), 19.8% |
+| 2025 | 12 months, 90.8% | 11 months (all but 10), 28.6% |
+| 2026 | 10 months (01..10), 93.2% | 8 months (01..04, 07..10), 23.9% |
+| All | 71 months, 77.2% | 43 months, 17.1% |
+
+2023-03..2026-10 for the South West: 84.6–97.3% each, 91.9% on average. Darwin's
+months not listed failed: 50 with no screened station online (2019-01..2021-03,
+2022-08..2024-07), and 2022-08, 2025-10, 2026-05 and 2026-06 with data but no second
+whose hum passed the checks. None failed for downloads.
 
 **End to end.** A 12-minute synthetic clip whose 50 Hz tone (with harmonics and noise)
 follows `AM.R1E83` alone on 2026-06-15 from 04:40:00 UTC, decoded by a separate tool,
@@ -227,8 +248,8 @@ that follows the hobbyists. In addition:
 - **The South West in 2020–2021 is one station** (`AM.RBA56`, then `AM.RBA34`), and
   it decoded in few probes.
 - **Gaps.** The South West has nothing before 2017-01-25, nothing from 2017-07 to
-  2019-12 and little until 2022-02; Darwin nothing before 2018-02 or in
-  2022-08..2024-09.
+  2019-12 and little until 2022-02; Darwin nothing before 2018-10, in
+  2019-01..2021-03 or in 2022-08..2024-07.
 - **Pilbara, Mount Isa, Alice Springs: no station.** No Shake is registered in any of
   them, and the school seismometers there filter the line out. Horizon Power's town
   systems (Broome, Kununurra, Esperance, Carnarvon, ...) are not even outlined.
@@ -236,8 +257,11 @@ that follows the hobbyists. In addition:
 ## Producing the data
 
 As for China: never on the dashboard (`GEOLOC_SHAKE_REFRESH` and `GEOLOC_AUSPASS_REFRESH`
-are not set there), backfilled offline and pushed. The Shake months cost about 25
-CPU-minutes per station; the 2017 array about 1 GB of download per station and month.
+are not set there), backfilled offline and pushed. The Shake archive sets the pace, not the CPU: it
+streams ~0.5 MB/s per request and answers 429 past about one request every 1.5–2 s, so
+each station-day is one request, ten in flight. A South West month takes 10–16 minutes,
+a Darwin month with data 2–4; the 2023-03..2026-10 backfill took about 9 h. The 2017
+array costs about 1 GB of download per station and month.
 
     GEOLOC_SHAKE_REFRESH=1 GEOLOC_AUSPASS_REFRESH=1 geoloc refs refresh --grid australia_swis
     GEOLOC_SHAKE_REFRESH=1 geoloc refs refresh --grid darwin_katherine
