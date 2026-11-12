@@ -106,3 +106,39 @@ short-period, 2018–2026), northern Chile `IQ`, `8F`, `5E`, `8G` (2009–2018),
 Chile `ZE`, `XY` (2010), `C1.LR02`, Argentina `XN` (2022). Ecuador's nodal array `2N`
 (EarthScope, 2022-03-10..04-15, 250 samples/s) shows a 60 Hz line agreeing between
 nodes at r 0.5–0.84 on a quick tracker; it was not confirmed with `track_hum`.
+
+## Screening for 2008-09 to today (2026-11)
+
+The aim was to extend the reference past 2008-08. Nothing found carries the grid
+continuously. Each source below was probed with `track_hum` (60 Hz), 30 minutes from
+15:00 UTC. A real line shows as near-full coverage at 9 dB or more; noise reads 3–5 dB
+at about 80 % coverage.
+
+- **USP's own archive** (`seisrequest.iag.usp.br`; networks BL, BR, VL, XC, 7F, XV;
+  every channel ≥ 100 samples/s). Probed on 2009-06, 2011-06, 2012-10, 2014-06, 2018-06,
+  2023-06 and 2026-06, with 30–60 channels per date. No station hums at 40 Hz. The
+  200 samples/s channels (`MCI6`–`MCI9`, `BB22B`, `LDASE`, `PRB1`), where 60 Hz is in
+  band, reach 4–7 dB. The best single readings, `BR.SDBA` (2023-06) and `BL.RCLB`
+  (2012-10), have 7–10 dB on one date only. Modern digitisers filter the line out
+  before decimation. `CAM1` was an exception because of its old recorder.
+- **EarthScope** (RSBR network `ON`, 19 stations 2011 on; `BL.RCLB`, `VABB`, `PMNB`;
+  `GT.BDFB`; `IU.RCBR`, `SAML`, `PTGA`). The 100 samples/s channels show nothing
+  (3.5–5.8 dB on 2015-06-15). The 200/500 samples/s Bebedouro array (`BEB*`, `BB1*B`,
+  2005–2010) is event-triggered, with 0–12 % of a half hour archived.
+- **Raspberry Shakes** (network `AM`). 61 units are registered inside the SIN outline.
+  Probes ran every second month, 2017-02..2026-10 (46 dates). Only 1–11 of them per
+  date have archived data. One unit hums at 40 Hz: `AM.REDD8` (Santa Catarina, online
+  since 2026-09-29), at 11–19 dB on four of six probes in 2026-10 and none on
+  2026-11-05. Its track wanders like a grid (±30 mHz over minutes), but there is no
+  second site to confirm it. The 50 samples/s units (`RF442`, `R2DD9`), where 60 Hz
+  folds to 10 Hz, show only seismic noise. `RD272` and `SB293` carry a line at 20 Hz
+  (where 120 Hz folds). It sits fixed at 0 mHz and the two units do not correlate
+  (r = −0.02), so it is an internal tone.
+- **Measured series.** None was found. ONS publishes frequency quality indicators
+  only. MedFasee (UFSC) shares PMU data on request. Zenodo, figshare, Mendeley and IEEE
+  DataPort hold Brazilian power data at 15 min or hourly resolution, or switching
+  transients, but no frequency log.
+
+The SIN after 2008-08 needs one of these: a PMU archive obtained on request (MedFasee,
+ONS), or Raspberry Shakes humming at two sites at once. `AM.REDD8` can become a
+one-station source like `seismic_darwin` if another Shake in the South starts to hum.
