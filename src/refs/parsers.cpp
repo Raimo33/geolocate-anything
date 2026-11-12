@@ -252,7 +252,8 @@ std::map<std::string, std::string> parse_fingrid_index(std::string_view html) {
 
 // ---------------------------------------------------------------- EDR
 
-EdrParser::EdrParser(const std::vector<std::string>& months, std::optional<Implied> implied) : months_(months), implied_(implied) {
+EdrParser::EdrParser(const std::vector<std::string>& months, std::optional<Implied> implied, std::vector<ClockKnot> clock)
+    : months_(months), implied_(implied), clock_(std::move(clock)) {
   a_ = month_bounds(months.front()).first;
   b_ = month_bounds(months.back()).second;
   out_.assign(std::size_t(b_ - a_), NAN);
@@ -289,14 +290,33 @@ void EdrParser::line(std::string_view l) {
     secs = w->utc();
     v = num(f[std::size_t(fcol_)]) * 1e-3;
   }
+  if (!clock_.empty()) {
+    if (secs < double(clock_.front().stamp)) return;
+    secs = std::round(secs - offset_at(secs));
+  }
   if (!(std::fabs(v) < 3.0 && secs >= double(a_) && secs < double(b_))) return;
   if (qcol_ >= 0 && (int(f.size()) <= qcol_ || num(f[std::size_t(qcol_)]) != 0)) return;
   out_[std::size_t(std::floor(secs - double(a_)))] = static_cast<float>(v);
   ++kept;
 }
 
+double EdrParser::offset_at(double stamp) const {
+  if (stamp <= double(clock_.front().stamp)) return clock_.front().offset_s;
+  for (std::size_t i = 1; i < clock_.size(); ++i)
+    if (stamp <= double(clock_[i].stamp)) {
+      const auto &a = clock_[i - 1], &b = clock_[i];
+      return a.offset_s + (b.offset_s - a.offset_s) * (stamp - double(a.stamp)) / double(b.stamp - a.stamp);
+    }
+  return clock_.back().offset_s;
+}
+
 std::map<std::string, std::vector<float>> EdrParser::finish() {
   ls_.finish([&](std::string_view l) { line(l); });
+  // A clock running slow or fast moves rows onto the same second or past one: those
+  // single-second holes between two values are filled.
+  if (!clock_.empty())
+    for (std::size_t i = 1; i + 1 < out_.size(); ++i)
+      if (std::isnan(out_[i]) && !std::isnan(out_[i - 1]) && !std::isnan(out_[i + 1])) out_[i] = 0.5f * (out_[i - 1] + out_[i + 1]);
   std::map<std::string, std::vector<float>> res;
   for (auto& m : months_) {
     auto [m0, m1] = month_bounds(m);

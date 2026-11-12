@@ -23,6 +23,7 @@ Documentation:
 - [`docs/grids/seismic_west.md`](docs/grids/seismic_west.md): US Western frequency (2001–2018, 2025-08 on) from seismometer hum
 - [`docs/grids/seismic_ercot.md`](docs/grids/seismic_ercot.md): ERCOT (Texas) frequency (2014 on) from seismometer hum
 - [`docs/grids/seismic_ips.md`](docs/grids/seismic_ips.md): IPS/UPS (Russia and neighbours) frequency from seismometer hum
+- [`docs/grids/seismic_estonia.md`](docs/grids/seismic_estonia.md): IPS/UPS in 2015–2025 from Estonian seismometers, and the KIT Tallinn clock fix
 - [`docs/grids/seismic_china.md`](docs/grids/seismic_china.md): China's grids from Raspberry Shake hum
 - [`docs/grids/seismic_brazil.md`](docs/grids/seismic_brazil.md): Brazil's grid frequency (2004–2008) from seismometer hum
 - [`docs/grids/seismic_australia.md`](docs/grids/seismic_australia.md): Western Australia's South West grid (2017, 2022 on) and Darwin from seismometer hum
@@ -105,6 +106,8 @@ All series are stored at 1 s resolution, rounded to 1 mHz.
 | Southern Africa | `pmu_zenodo` | 2025-04-28 → 2025-12 | PMU in Stellenbosch, 1 s. | — |
 | Japan East (50 Hz) | `dtu_tokyo` | 42 days of 2017, 317 of 2020 | DTU recorder in Tokyo, 0.5 s (CC BY-NC-ND). | — |
 | IPS/UPS (Russia & neighbours) | `seismic_ips` | 2022-10 → today (gaps) | Reconstructed from the 50 Hz hum in GPS-timed strong-motion stations in Azerbaijan, Kazakhstan and Kyrgyzstan; only seconds on which two sites agree. See [below](#ipsups-grid-frequency-from-seismometer-hum). | Stations hum only part of the time: 98% of 2025-04 is stored, 74% of 2023-01, 6–15% of the months of 2023-03..2024-10 tried. Sites can differ by up to ~2 s. |
+| IPS/UPS (Russia & neighbours) | `seismic_estonia` | 2015-05 → 2025-02-08 (gaps) | Reconstructed from the 50 Hz hum in the Estonian national seismic network (250 samples/s, GPS-timed) while the Baltic states were part of IPS/UPS; only seconds on which two sites agree. See [`docs/grids/seismic_estonia.md`](docs/grids/seismic_estonia.md). | Sites hum by spells, mostly at night: 4–25% of the seconds of the months checked. ~1 s ahead of KIT's recorders (r 0.95–0.996, 2.7 mHz RMS against Kaunas/Tallinn 2025). |
+| IPS/UPS (Russia & neighbours) | `osf_edr` | 2019-03-29 → 2019-04-17, 2019-04-30 → 05-11 | KIT recorders in Tallinn and St. Petersburg, 1 s. | Tallinn's clock ran 19–55 s late, growing by 1–2 s a day: corrected against `seismic_estonia`, its first four days dropped. |
 | China Southern (with Hong Kong, Macau) | `seismic_cn_south` | 2019-07 → 2025-12 (gaps; 326 days in all) | Reconstructed from the 50 Hz hum in Raspberry Shake geophones in Hong Kong and Guangdong. The line sits on the Nyquist frequency of their 100 samples/s; a decoder recovers the signed deviation. See [below](#chinas-grid-frequencies-from-raspberry-shake-hum). | 4–7 mHz per station, against 1 mHz for a direct line. Stations hum by spells. |
 | China North & Central | `seismic_cn_north` | 2019-08 → 2020-03, 2022-09 → 2024-09 (483 days) | Same method: Beijing, Tianjin, Ordos. | As above; often one station alone. |
 | China East | `seismic_cn_east` | 2023-10 → 2024-04 (53 days) | Same method: Xuzhou, Xiamen. | As above. |
@@ -144,8 +147,12 @@ checks and limits: [`docs/grids/seismic_west.md`](docs/grids/seismic_west.md),
 
 The same method at 50 Hz gives the IPS/UPS area (Russia, Belarus, Kazakhstan, Central
 Asia, the South Caucasus) from 2022-10: `seismic_ips` fuses 200 samples/s strong-motion
-stations 2,000 km apart in Azerbaijan, Kazakhstan and Kyrgyzstan. Nothing usable was
-found for earlier years. Ukraine is part of Continental Europe since 2022-03-16 and is
+stations 2,000 km apart in Azerbaijan, Kazakhstan and Kyrgyzstan. For 2015-05 to
+2025-02-08, while the Baltic states were still part of the system, `seismic_estonia` does
+the same with the Estonian national network's 250 samples/s stations at GEOFON
+([`docs/grids/seismic_estonia.md`](docs/grids/seismic_estonia.md)); they also showed
+that KIT's 2019 Tallinn recorder ran up to 55 s late, now corrected. Nothing usable was
+found before 2015. Ukraine is part of Continental Europe since 2022-03-16 and is
 matched there. Screening, coverage and what was ruled out:
 [`docs/grids/seismic_ips.md`](docs/grids/seismic_ips.md).
 
@@ -206,7 +213,7 @@ station. Details: [`docs/grids/seismic_australia.md`](docs/grids/seismic_austral
   when the hum is clear, fewer when it is faint.
 - **Coverage.** A grid without reference data at the recording time can be neither
   confirmed nor excluded. Japan West, Québec, Taiwan, Australia's Pilbara, Mount Isa and Alice Springs systems and China's Northeast, Northwest and Yunnan grids have no open source; Western Australia's South West grid is covered for 2017-01..06 and from 2022, Darwin by spells, the latter two only where a Raspberry Shake hummed; the other Chinese grids are covered only where a Raspberry Shake hummed; IPS/UPS has none before
-  2022-10 apart from three months of 2019;
+  2015-05 and only spells (mostly nights) until 2022-10;
   Australia has no data for 2017-04..2024-11; ERCOT has almost none before 2014 and the
   US Western Interconnection none before 2001-09.
 
@@ -250,7 +257,7 @@ import; `GEOLOC_EARTHSCOPE_REFRESH_TOKEN` enables the EarthScope seismic refresh
 backfill, so they are fetched offline and pushed, never refreshed by the dashboard; `GEOLOC_SHAKE_REFRESH` enables the Raspberry Shake
 sources (`seismic_cn_*`, `seismic_swis`, `seismic_darwin`), whose decoding costs ~25 CPU-minutes per station and month: they
 are backfilled on a separate machine and pushed (`refs push`), never refreshed by the
-dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
+dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_GEOFON_REFRESH` enables `seismic_estonia` (a closed period, ~4 GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
 2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);
 `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
 cores, 4 to 8), and how many threads `locate` uses (default: every core): a search

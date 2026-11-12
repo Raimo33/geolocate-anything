@@ -135,7 +135,7 @@ Ukraine and Moldova have been part of Continental Europe since 2022-03-16, so a
 recording from government-held Ukraine after that date is matched against the
 Continental European references, which are continuous. What stays uncovered:
 
-- Ukraine before 2022-02-24 (IPS/UPS; only KIT's 2019-03..05 campaign), and the island
+- Ukraine before 2022-02-24 (IPS/UPS: from 2015-05 by `seismic_estonia` where Estonian sites hum, before that nothing), and the island
   operation of 2022-02-24..03-16.
 - Crimea since 2015 and other areas reconnected to the Russian system: IPS/UPS, covered
   by `seismic_ips` from 2022-10 where two stations agree.
@@ -144,12 +144,10 @@ Continental European references, which are continuous. What stays uncovered:
 
 ## Open questions
 
-- European data centres (GEOFON and the other EIDA nodes) archive the Baltic, Ukrainian,
-  Moldovan, Georgian and Romanian networks and were not screened: they were not
-  reachable from the development sandbox. Stations there in the Baltic states before
-  2025-02 and in Ukraine and Moldova before 2022-03 could extend IPS/UPS back in time,
-  if any records at 200 samples/s or more.
-- Elering, AST and Litgrid measured IPS/UPS frequency until 2025-02-08; whether any of
-  them serves an archive at seconds resolution was not checked (same reason).
+- *Answered 2026-11-12* ([seismic_estonia.md](seismic_estonia.md)): of the European data
+  centres, only GEOFON's Estonian network (EE, 250 samples/s since 2015-05) carries the
+  line; it is `seismic_estonia`, IPS/UPS until 2025-02-08. No EIDA node lists anything at
+  ≥ 120 samples/s in Latvia, Lithuania, Belarus, Ukraine, Moldova, Georgia or Armenia. Elering's public API
+  has a frequency field, but at 5-minute steps rounded to 10 mHz.
 - Whether the months with a single humming station can be used with a plausibility test
   on that station (spread and mean of the track) instead of a second site.

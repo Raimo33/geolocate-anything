@@ -145,7 +145,15 @@ class EdrParser {
     i64 t0;
     double nominal_hz;
   };
-  explicit EdrParser(const std::vector<std::string>& months, std::optional<Implied> implied = {});
+  // A recorder whose clock wandered: its offset (stamp minus UTC, seconds) at known
+  // stamps, linear between them and held after the last. Rows stamped before the first
+  // knot are dropped (the offset there is not known). Each row is moved to its stamp
+  // minus the offset; a second the move leaves empty takes the mean of its neighbours.
+  struct ClockKnot {
+    i64 stamp;
+    double offset_s;
+  };
+  explicit EdrParser(const std::vector<std::string>& months, std::optional<Implied> implied = {}, std::vector<ClockKnot> clock = {});
   void feed(std::string_view chunk);
   std::map<std::string, std::vector<float>> finish();
   std::size_t rows = 0, kept = 0;
@@ -160,6 +168,8 @@ class EdrParser {
   char sep_ = ';';
   bool header_ = true;
   std::optional<Implied> implied_;
+  std::vector<ClockKnot> clock_;
+  double offset_at(double stamp) const;
 };
 
 // ---- Plain time/frequency CSVs (AESO, the Grid-India PMU release, PMU and DTU files

@@ -5,7 +5,8 @@
 // Chinese grids from Raspberry Shake geophones (50 Hz on the Nyquist of 100 samples/s),
 // seismic_swis and seismic_darwin Western Australia's SWIS and Darwin-Katherine the same way,
 // seismic_perth_basin the SWIS in 2017 from a 250 samples/s array at AusPass;
-// seismic_brazil is Brazil's SIN (60 Hz) in 2004-02..2008-08, from the University of São Paulo's archive.
+// seismic_brazil is Brazil's SIN (60 Hz) in 2004-02..2008-08, from the University of São Paulo's archive;
+// seismic_estonia is IPS/UPS in 2015-05..2025-02 from the Estonian network at GEOFON (250 samples/s).
 #pragma once
 
 #include <cmath>
@@ -65,7 +66,9 @@ struct Network {
   const char* lone_before = nullptr;
   // Stations closer than this count as one site whatever their codes (0: by code only).
   float same_site_km = 0;
-  // Unix time the stations stopped being on this grid (0: still on it): later hours are not fetched.
+  // The grid leaves the stations' area at this UTC second (0: never): no month after
+  // the one holding it is listed, and nothing from it on is stored (seismic_estonia: the
+  // Baltic states left IPS/UPS on 2025-02-08).
   std::int64_t until = 0;
 };
 const Network& east();
@@ -85,6 +88,7 @@ const Network& darwin();
 // The SWIS again, 2017-01..06, from the direct line in a 250 samples/s array at AusPass.
 const Network& perth_basin();
 const Network& brazil();
+const Network& estonia();
 const Network* network(std::string_view source);
 
 // Months worth fetching, from the first to the current one (or the last a station's epoch reaches).

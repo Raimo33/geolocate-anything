@@ -340,6 +340,22 @@ TEST(SeismicNetworks, PerthBasinArrayIsAClosedPeriodFromAusPass) {
   EXPECT_TRUE(refs::refresh_plan("australia_swis").empty());  // not from the dashboard
 }
 
+// IPS/UPS from Estonia: a closed period that ends when the Baltic states left the grid.
+TEST(SeismicNetworks, EstoniaIsIpsUntilTheBalticsLeft) {
+  const auto& e = seismic::estonia();
+  ASSERT_EQ(seismic::network("seismic_estonia"), &e);
+  EXPECT_EQ(e.mains_hz, 50);
+  EXPECT_FALSE(e.nyquist);  // 250 samples/s: the line is seen directly
+  EXPECT_FALSE(e.lone);
+  EXPECT_TRUE(std::string(e.dataselect).find("geofon.gfz.de") != std::string::npos);
+  const auto m = seismic::months(e);
+  EXPECT_EQ(m.front(), "2015-05");
+  EXPECT_EQ(m.back(), "2025-02");  // stations still record; the grid moved on 2025-02-08
+  for (auto& i : refs::placement_issues("seismic_estonia", "ips_ups", "2019-04", nullptr)) ADD_FAILURE() << i.message;
+  ::unsetenv("GEOLOC_GEOFON_REFRESH");
+  for (auto& [src, months] : refs::refresh_plan("ips_ups")) EXPECT_NE(src, "seismic_estonia");  // not from the dashboard
+}
+
 TEST(SeismicNetworks, EastAndIps) {
   ASSERT_TRUE(seismic::network("seismic_east") && seismic::network("seismic_ips"));
   EXPECT_FALSE(seismic::network("osf_edr"));

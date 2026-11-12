@@ -243,6 +243,15 @@ std::vector<Source>& table() {
     // A closed archive, a few GB a month: backfilled offline and pushed to the bucket, never
     // refreshed by the dashboard (which has no GEOLOC_AUSPASS_REFRESH).
     v.back().needs_env = "GEOLOC_AUSPASS_REFRESH";
+    v.push_back({{"seismic_estonia", {"ips_ups"},
+                  "Mains hum in the Estonian national seismic network's 250 samples/s recordings (network EE at GEOFON, GPS-timed), "
+                  "IPS/UPS while the Baltic states were part of it, 1 s, 2015-05..2025-02-08; only seconds where two sites agree "
+                  "(one 6 h request per station; ~1 GB per station and month)",
+                  "GEOFON open FDSN data (network EE, doi:10.14470/RR425351)", false, 1},
+                 &net_fetch<&seismic::estonia>, &net_months<&seismic::estonia>, 1, {}});
+    // A closed period, a few GB a month: backfilled offline and pushed to the bucket, never
+    // refreshed by the dashboard (which has no GEOLOC_GEOFON_REFRESH).
+    v.back().needs_env = "GEOLOC_GEOFON_REFRESH";
     v.push_back({{"seismic_brazil", {"brazil_sin"},
                   "Mains hum in the University of São Paulo's short-period seismic recordings (network BL, 100 samples/s, 60 Hz folded "
                   "to 40 Hz), Brazil's SIN, 1 s, 2004-02..2008-08; one recorder, clock within ~2 s of UTC (one 6 h request per channel; "

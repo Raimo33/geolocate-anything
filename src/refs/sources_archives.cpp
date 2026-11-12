@@ -73,6 +73,28 @@ const std::map<std::string, Location> EDR_LOCATIONS = {
     {"MY01", {"Kuala Lumpur, Malaysia", 3.14, 101.69}},
 };
 
+// Recorders whose clock was not on UTC, as the GPS-timed Estonian seismometers show
+// (seismic_estonia; docs/grids/seismic_estonia.md). KIT's files put every recorder on one
+// time axis, and the Karlsruhe column beside Tallinn's follows Continental Europe's
+// measured series at lag 0, but Tallinn's own column (2019-03-25..04-17) runs late by an
+// offset that grows by 1.2-2.3 s a day, from 19 s on 2019-03-29 to 55 s on 04-17. The
+// knots are its lag behind the seismic reconstruction in 1-6 h windows (r 0.97-0.99),
+// less the 1 s by which that reconstruction leads KIT's recorders whose clocks held
+// (St. Petersburg, RU01, 2019-04-30..05-11: +1 s throughout; Kaunas and Tallinn in 2025,
+// osf_baltic: +0.9 s), so Tallinn lands on KIT's own time base. Before 03-29 23:00 the
+// lag is not determined (too few humming seconds; a broad peak at 33 s on 03-26 would
+// mean a reset), so those four days are dropped.
+using Knot = EdrParser::ClockKnot;
+std::vector<Knot> edr_clock(const std::string& site) {
+  if (site != "EE01") return {};
+  auto at = [](const char* iso) { return static_cast<i64>(parse_iso_datetime(iso)->utc()); };
+  return {{at("2019-03-29 23:00:00"), 19.0}, {at("2019-04-02 02:00:00"), 21.0}, {at("2019-04-03 19:30:00"), 25.0},
+          {at("2019-04-04 19:00:00"), 28.0}, {at("2019-04-05 21:30:00"), 30.0}, {at("2019-04-06 20:30:00"), 32.0},
+          {at("2019-04-08 03:00:00"), 35.0}, {at("2019-04-11 22:30:00"), 42.0}, {at("2019-04-12 21:00:00"), 43.5},
+          {at("2019-04-13 22:00:00"), 47.5}, {at("2019-04-15 03:00:00"), 50.0}, {at("2019-04-15 21:30:00"), 50.0},
+          {at("2019-04-16 12:00:00"), 53.5}, {at("2019-04-17 00:30:00"), 55.0}};
+}
+
 const EdrDef& edr_def(const std::string& site) {
   for (auto& d : EDR_SITES)
     if (site == d.site) return d;
@@ -85,7 +107,7 @@ Loader edr_loader(const EdrDef& d) {
     log(std::string("  downloading EDR campaign ") + d.site + " (" + d.m0 + ".." + d.m1 + ") from OSF ...");
     std::optional<EdrParser::Implied> implied;
     if (d.implied_start) implied = EdrParser::Implied{static_cast<i64>(parse_iso_datetime(d.implied_start)->utc()), d.nominal_hz};
-    EdrParser p(months_between(d.m0, d.m1), implied);
+    EdrParser p(months_between(d.m0, d.m1), implied, edr_clock(d.site));
     co_await stream_url(c, d.url, [&](std::string_view b) { p.feed(b); });
     s.months = p.finish();
     s.rows = p.rows;
@@ -114,6 +136,8 @@ asio::awaitable<MonthData> edr_fetch(Ctx& c, const std::string& grid, const std:
     auto s = c.files.contains("edr:" + site) ? c.files["edr:" + site] : nullptr;
     std::int64_t filled = v ? fill_gaps(merged, *v) : 0;
     used.push_back({{"site", site}, {"url", d.url}, {"filled_s", filled}, {"rows", s ? s->rows : 0}, {"rows_kept_qi0", s ? s->kept : 0}});
+    if (!edr_clock(site).empty())
+      used.back()["clock"] = "corrected: the recorder ran 19-55 s late, measured against seismic_estonia; rows before 2019-03-29 23:00 dropped";
   }
   if (!any_finite(merged))
     throw Unavailable("EDR campaigns " + join(sites, ", ") + " hold no valid data in " + month);

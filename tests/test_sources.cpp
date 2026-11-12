@@ -357,3 +357,24 @@ TEST(Zip, CutShortOrCorruptMembersAreRefused) {
   EXPECT_THROW(zip::read_all(std::as_bytes(std::span(local.data(), local.size())), e), std::runtime_error);
 }
 
+
+// A KIT recorder whose clock ran late: rows move back by the offset at their stamp
+// (linear between knots), rows before the first knot are dropped, and the single
+// seconds the stretch leaves empty are filled from their neighbours.
+TEST(EdrParser, ClockKnotsMoveRowsToUtc) {
+  const i64 t0 = i64(utc("2019-04-01 00:00:00"));
+  refs::EdrParser p({"2019-04"}, {}, {{t0 + 100, 20.0}, {t0 + 200, 30.0}});
+  std::string csv = "Time;f50_EE;QI_EE\n";
+  char line[64];
+  for (int s = 0; s < 400; ++s) {
+    std::snprintf(line, sizeof line, "2019-04-01 00:%02d:%02d;%d;0\n", s / 60, s % 60, s);
+    csv += line;
+  }
+  p.feed(csv);
+  auto v = p.finish().at("2019-04");
+  EXPECT_TRUE(std::isnan(v[79]));                // stamp 99 is before the first knot: dropped
+  EXPECT_FLOAT_EQ(v[80], 0.100f);                // stamp 100, 20 s late
+  EXPECT_FLOAT_EQ(v[170], 0.200f);               // stamp 200, 30 s late
+  EXPECT_FLOAT_EQ(v[369], 0.399f);               // held after the last knot
+  for (int s = 80; s < 370; ++s) EXPECT_FALSE(std::isnan(v[std::size_t(s)])) << s;  // no holes left by the stretch
+}

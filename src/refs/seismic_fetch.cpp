@@ -73,11 +73,7 @@ namespace brazil_table {
 #include "refs/seismic_brazil_stations.inc"
 }
 namespace estonia_table {
-#if __has_include("refs/seismic_estonia_stations.inc")
 #include "refs/seismic_estonia_stations.inc"
-#else
-const std::vector<Station> STATIONS;  // the station table isn't committed yet: no stations
-#endif
 }
 const std::vector<Station>& cn_south_list() { return cn_south_table::STATIONS; }
 const std::vector<Station>& cn_north_list() { return cn_north_table::STATIONS; }
