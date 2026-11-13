@@ -372,14 +372,26 @@ void judge(SearchResult& res) {
 SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& events, const TrackSource& tracks_for, Terrain& terrain,
                             const SearchOptions& o, double region_deg, const std::function<void(const std::string&)>& progress) {
   std::vector<Bbox> regions;
+  // A narrow time window (a hum second) leaves few tracks even over a continent: one pass,
+  // parallel over the whole box, beats loading it region by region.
+  if (o.start_max - o.start_min < 6 * 3600.0) region_deg = std::max({region_deg, o.box.east - o.box.west, o.box.north - o.box.south});
   for (double la = o.box.south; la < o.box.north; la += region_deg)
     for (double lo = o.box.west; lo < o.box.east; lo += region_deg)
       regions.push_back({lo, la, std::min(lo + region_deg, o.box.east), std::min(la + region_deg, o.box.north)});
   SearchResult all;
   std::map<std::string, std::size_t> by_combo;
+  // Per-region budgets shrink with the number of regions (a wide box would otherwise
+  // refine every region's local best), and a region's survivors must come within 60% of
+  // the best answer found so far to be refined at all.
+  const double share = std::min(1.0, 4.0 / double(std::max<std::size_t>(1, regions.size())));
+  double best_so_far = -INFINITY;
   for (std::size_t i = 0; i < regions.size(); ++i) {
     SearchOptions ro = o;
     ro.box = regions[i];
+    ro.max_scored = std::max(100, int(o.max_scored * share));
+    ro.max_subgrid = std::max(30, int(o.max_subgrid * share));
+    ro.max_refine = regions.size() > 4 ? 2 : o.max_refine;
+    if (std::isfinite(best_so_far)) ro.score_floor = std::max(o.score_floor, 0.6 * best_so_far);
     auto tracks = tracks_for(regions[i].grown(std::max(15000.0, 2 * o.silence_factor * 9000.0)));
     if (progress) {
       char b[160];
@@ -395,6 +407,7 @@ SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& e
     all.wall_tiles += r.wall_tiles, all.wall_subgrid += r.wall_subgrid, all.wall_refine += r.wall_refine, all.seconds += r.seconds;
     all.events_used = r.events_used;
     for (auto& c : r.candidates) {
+      best_so_far = std::max(best_so_far, c.score);
       auto it = by_combo.find(c.combo);
       if (it == by_combo.end()) by_combo[c.combo] = all.candidates.size(), all.candidates.push_back(std::move(c));
       else if (c.score > all.candidates[it->second].score) all.candidates[it->second] = std::move(c);
@@ -410,6 +423,18 @@ SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& e
   all.terrain_complete = terrain.complete();
   judge(all);
   return all;
+}
+
+Path path_of(const Track& tr) {
+  std::vector<PathPoint> pts;
+  for (auto& f : tr.fixes) {
+    if (!std::isfinite(f.alt_m)) continue;
+    Vec3 v{NAN, NAN, NAN};
+    if (std::isfinite(f.gs) && std::isfinite(f.track)) v = velocity_ecef(f.lat, f.lon, f.gs, f.track, std::isfinite(f.vrate) ? f.vrate : 0.0f);
+    pts.push_back({f.t, ecef(f.lat, f.lon, f.alt_m), v});
+  }
+  if (pts.size() < 2) return {};
+  return Path(std::move(pts));
 }
 
 const char* air_level_name(AirLevel l) {
@@ -473,16 +498,10 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
   // Segments as ECEF paths.
   std::vector<Seg> segs;
   for (auto& tr : tracks) {
-    std::vector<PathPoint> pts;
-    for (auto& f : tr.fixes) {
-      if (!std::isfinite(f.alt_m)) continue;
-      Vec3 v{NAN, NAN, NAN};
-      if (std::isfinite(f.gs) && std::isfinite(f.track)) v = velocity_ecef(f.lat, f.lon, f.gs, f.track, std::isfinite(f.vrate) ? f.vrate : 0.0f);
-      pts.push_back({f.t, ecef(f.lat, f.lon, f.alt_m), v});
-    }
-    if (pts.size() < 2) continue;
+    Path path = path_of(tr);
+    if (path.empty()) continue;
     const bool eligible = tr.info.engine != EngineType::Jet && (o.unknown_types || tr.info.engine != EngineType::Unknown);
-    Seg s{&tr, Path(std::move(pts)), eligible};
+    Seg s{&tr, std::move(path), eligible};
     segs.push_back(std::move(s));
   }
   res.segments = segs.size();
@@ -617,14 +636,50 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
       silent = sc.size();
     }
     const auto t_centre = now();
-    // 4a. Exact curves at the cell centre.
-    for (auto& s : surv) {
+    // 4a. Exact curves at the cell centre. A combination of flights usually survives in
+    //     a corridor of thousands of contiguous cells whose scores vary smoothly: every
+    //     third cell each way is fitted first, then the neighbourhoods of its best four.
+    auto quick = [&](Survivor& s) {
       const i64 r = CellGrid::krow(s.cell), c = CellGrid::kcol(s.cell);
       const double lat = grid.lat_c(r), lon = grid.lon_c(r, c);
       const Vec3 op = ecef(lat, lon, terrain.ground(lat, lon) + o.mic_height);
       std::vector<std::pair<int, const Path*>> cb;
       for (auto& [ei, sg] : s.combo) cb.emplace_back(ei, &segs[std::size_t(sg)].path);
       s.score = joint_fit(spec, ev, cb, op, s.a, s.b, o.c, QUICK).score;
+    };
+    {
+      std::map<std::vector<std::pair<int, int>>, std::vector<std::size_t>> groups;
+      for (std::size_t i = 0; i < surv.size(); ++i) groups[surv[i].combo].push_back(i);
+      std::vector<bool> keep(surv.size(), false);
+      for (auto& [combo, idx] : groups) {
+        if (idx.size() <= 48) {
+          for (auto i : idx) quick(surv[i]), keep[i] = true;
+          continue;
+        }
+        std::unordered_map<std::uint64_t, std::size_t> at;
+        for (auto i : idx) at[surv[i].cell] = i;
+        std::vector<std::size_t> lattice;
+        for (auto i : idx) {
+          const i64 r = CellGrid::krow(surv[i].cell), c = CellGrid::kcol(surv[i].cell);
+          if (((r % 3) + 3) % 3 == 0 && ((c % 3) + 3) % 3 == 0) lattice.push_back(i);
+        }
+        if (lattice.empty()) lattice = idx;
+        for (auto i : lattice) quick(surv[i]), keep[i] = true;
+        std::sort(lattice.begin(), lattice.end(), [&](auto a, auto b) { return surv[a].score > surv[b].score; });
+        for (std::size_t k = 0; k < std::min<std::size_t>(4, lattice.size()); ++k) {
+          const i64 r0 = CellGrid::krow(surv[lattice[k]].cell), c0 = CellGrid::kcol(surv[lattice[k]].cell);
+          for (i64 dr = -2; dr <= 2; ++dr)
+            for (i64 dc = -2; dc <= 2; ++dc) {
+              auto it = at.find(CellGrid::key(r0 + dr, c0 + dc));
+              if (it == at.end() || keep[it->second]) continue;
+              quick(surv[it->second]), keep[it->second] = true;
+            }
+        }
+      }
+      std::vector<Survivor> scored;
+      for (std::size_t i = 0; i < surv.size(); ++i)
+        if (keep[i]) scored.push_back(std::move(surv[i]));
+      surv = std::move(scored);
     }
     std::lock_guard lk(mu);
     cpu_corr += secs(t_tile, t_centre), cpu_centre += secs(t_centre, now());
@@ -656,6 +711,13 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
   });
   std::sort(survivors.begin(), survivors.end(), [](const Survivor& a, const Survivor& b) { return a.score > b.score; });
   if (int(survivors.size()) > o.max_subgrid) survivors.resize(std::size_t(o.max_subgrid));
+  while (!survivors.empty() && survivors.back().score < o.score_floor) survivors.pop_back();
+  if (survivors.empty()) {
+    res.reasons.push_back("no location heard matching aircraft at these times");
+    res.terrain_complete = terrain.complete();
+    res.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - clock0).count();
+    return res;
+  }
   auto make_candidate = [&](const Survivor& s, double lat, double lon, double ground) {
     const Vec3 op = ecef(lat, lon, ground + o.mic_height);
     std::vector<std::pair<int, const Path*>> cb;
@@ -712,7 +774,7 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
     else if (cands[i].score > best[it->second].first.score) best[it->second] = {cands[i], i};
   }
   std::sort(best.begin(), best.end(), [](auto& a, auto& b) { return a.first.score > b.first.score; });
-  const std::size_t n_refine = std::min<std::size_t>(5, best.size());
+  const std::size_t n_refine = std::min<std::size_t>(std::size_t(std::max(1, o.max_refine)), best.size());
   for (std::size_t k = 0; k < n_refine; ++k) {
     const Survivor& s = survivors[best[k].second];
     const Candidate base = best[k].first;

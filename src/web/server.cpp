@@ -626,6 +626,13 @@ asio::awaitable<Response> handle_locate(App& app, beast::tcp_stream& stream, bea
     if (auto it = fields.find(key); it != fields.end() && !it->second.empty()) argv.insert(argv.end(), {flag, it->second});
   if (auto it = fields.find("nominal"); it != fields.end() && (it->second == "50" || it->second == "60"))
     argv.insert(argv.end(), {"--nominal", it->second});
+  // Aircraft search area (west,south,east,north) for recordings without a hum match.
+  if (auto it = fields.find("aircraft_bbox"); it != fields.end() && !it->second.empty()) {
+    double b[4];
+    char tail;
+    if (std::sscanf(it->second.c_str(), "%lf,%lf,%lf,%lf%c", &b[0], &b[1], &b[2], &b[3], &tail) == 4)
+      argv.insert(argv.end(), {"--aircraft-bbox", it->second});
+  }
   co_return start_job(app, req, std::move(argv), std::move(*up.file));
 }
 

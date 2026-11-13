@@ -85,6 +85,18 @@ reader (deflate, floating-point predictor, tiled or stripped) avoids a GDAL depe
 | Exact curves | Each matched segment's curve is modelled for the listener (emission time solved), tabulated against absolute time, and scored against the spectrogram: one start time swept for all events, each event's rest frequency swept on its own (± 2%). A quick brightness fit ranks every survivor, a full fit the best 1,500 at the cell centre, then the best 300 on a 100 m sub-grid; the final fine pass scores on ridges. | 88 cpu-s + 12 s |
 | Ranking | Best point per combination of flights; the leading five refined on a 20 m grid. | 11 s |
 
+A combination of flights usually survives in a corridor of thousands of contiguous
+cells whose scores vary smoothly: the quick fit takes every third cell each way, then
+the 5 × 5 neighbourhoods of the best four (centre scoring 88 → 23 cpu-s on the
+reference case, same answer).
+
+Large boxes are searched in 3° regions, one at a time (memory stays near 2 GB for the
+whole US). Each region's refinement budget is the global one divided by the number of
+regions (at least 100 full fits, 30 sub-grid places, 2 refinements), and a region's
+survivors must come within 60% of the best answer found so far. A time window under
+6 h (a hum second) is searched in one pass over the whole box instead: few tracks
+fly in it even over a continent, and the tiles then run in parallel.
+
 Two scoring choices were measured on the reference case:
 
 * **Brightness saturates on strong tones**: summing z along the curve cannot tell a
@@ -124,12 +136,40 @@ above the default threshold). Between the flyovers, the video's rule, is the def
 | Weak or none, with candidates | The best five hum alignments (all grids) as hypotheses, ± 3 s each, two flyovers required | A hum alignment that an aircraft match confirms is right for both; the others fall. |
 | No hum / no candidate | The `--from/--to` window over `--aircraft-bbox`, two flyovers | Place and start time; then the hum is re-searched in the grid of that place, ± 6 h around the aircraft's time, and the rank of the alignment within 3 s of it is reported. With ~43,000 lags instead of years of them, a faint hum that could not stand out globally can confirm the time. |
 
-## 7. Results
+## 7. Dashboard
+
+When a result involves aircraft, the dashboard's result view gains an **Aircraft** tab
+and the map zooms to street level (a gray basemap fades in from zoom 7):
+
+- the place (pulsing pin), each matched aircraft's track ± 10 min, a plane icon at its
+  closest approach pointing along its heading, and a dashed line to the place;
+  runners-up as grey dots with their flights and scores;
+- hovering a track, plane or card highlights it; clicking opens the aircraft's details:
+  registration, type and description, build year, engines, operator (tar1090-db),
+  ICAO address, closest-approach time and slant distance, altitude, speed, heading,
+  the tone's rest frequency and fit, and a link to its track on adsb.lol;
+- each flyover's spectrogram (the whitened one the search scores on, around the CPA,
+  covering every line's Doppler sweep), with the curve modelled from the aircraft's
+  real track (dashed) and the straight-pass measurement (dotted); hover reads out time
+  in the recording, UTC and frequency, click hides the curves. Detections no aircraft
+  explained are listed below.
+
+Upload option **Aircraft area → Use map view** passes the visible map as the search
+area for recordings without a hum match. The report carries this as `aircraft.flights`
+and `aircraft.spectra` (w × h bytes, base64) in `geoloc locate --json`/`--web-json`.
+
+## 8. Results
 
 | Case | Result |
 |---|---|
 | Synthetic (unit test): two passes 600 s apart in a 20-minute recording, decoys at the same speeds and times 25 km and 40 s off; ±30 min window, 0.8° × 0.6° box | Listener within 150 m, start within 0.5 s, both flights right; also with the start known to ± 3 s and one flyover. |
 | colsto's recording, 2026-09-08 ADS-B, Long Island box (1.7° × 0.9°), whole day | **40.87621, −73.52335**: 160 m from DOPPLERGEIST's published reference (40.87693, −73.52498, a public map pin, not surveyed); flights N22NY (PC-12) and N93CQ (King Air 350), the reference's; start 20:17:30 UTC (reference 20:17:29.7); moderate, lead 20%, fits 1.04 / 0.92. 59 s on 12 threads. |
+| Same, continental US (−125..−66, 24..50), whole day, aircraft alone | The reference place is **#3** (score 101.6) behind two wrong flight pairs at 103.6 and 103.0 (Texas Hill Country; western New Jersey), out of 32,000 places scored; verdict weak (lead 1%). Two flyovers and a whole day leave too many look-alike pairs nationwide: 171k flight segments, 181M corridor cells, 1.4M with one clock, 0.86M silent. 2 h 41 min, 2.2 GB peak. |
+| Same recording through `geoloc locate` (hum + aircraft), hum searched over 2026-09-08 | The hum alone is **strong** in US Eastern at 20:17:30 UTC; at that second ± 3 s the aircraft search returns the reference place, **strong**, with the same two aircraft. With an area given (Long Island) 73 s; over the whole US Eastern grid (Florida to Labrador, 9,236 flight segments at that hour) 90 s, 1.6 GB, lead 29%. |
+
+What the two runs say: at national scale the aircraft need the hum (or many flyovers,
+or a known area). The hum's second removes the time freedom, and with it nearly all
+look-alike pairs; the aircraft then turn the hum's continent into a place.
 
 ## Limits
 

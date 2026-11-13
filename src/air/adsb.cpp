@@ -421,6 +421,34 @@ const AircraftDb& AircraftDb::get() {
   return db;
 }
 
+std::map<std::uint32_t, RegistryEntry> registry_lookup(const std::set<std::uint32_t>& icaos) {
+  std::map<std::uint32_t, RegistryEntry> out;
+  if (icaos.empty()) return out;
+  AircraftDb::get();  // downloads the registry when it is missing
+  auto gz = read_file(adsb_dir() / "aircraft.csv.gz");
+  if (!gz) return out;
+  const std::string csv = gunzip(*gz);
+  std::string_view rest(csv);
+  while (!rest.empty() && out.size() < icaos.size()) {
+    const auto nl = rest.find('\n');
+    std::string_view line = rest.substr(0, nl);
+    rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
+    if (line.size() < 7 || line[6] != ';') continue;
+    const auto icao = std::uint32_t(std::strtoul(std::string(line.substr(0, 6)).c_str(), nullptr, 16));
+    if (!icaos.count(icao)) continue;
+    // icao;registration;type;flags;description;year;owner;
+    std::vector<std::string_view> f;
+    for (std::size_t a = 0; a <= line.size();) {
+      const auto b = std::min(line.size(), line.find(';', a));
+      f.push_back(line.substr(a, b - a));
+      a = b + 1;
+    }
+    f.resize(std::max<std::size_t>(f.size(), 7));
+    out[icao] = {std::string(f[1]), std::string(f[2]), std::string(f[4]), std::string(f[5]), std::string(f[6])};
+  }
+  return out;
+}
+
 fs::path adsb_dir() { return store::cache_dir() / "adsb"; }
 fs::path day_path(const std::string& day) { return adsb_dir() / (day + ".trk"); }
 bool has_day(const std::string& day) { return fs::exists(day_path(day)); }

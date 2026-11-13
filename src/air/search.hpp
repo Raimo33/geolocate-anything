@@ -54,6 +54,8 @@ struct SearchOptions {
   int top_k = 20;
   int max_scored = 1500;                    // survivors fully fitted at the cell centre (best by a quick fit)
   int max_subgrid = 300;                    // of those, scored on the sub-grid
+  int max_refine = 5;                       // best flight combinations refined on the fine grid
+  double score_floor = -INFINITY;           // survivors whose full fit scores below this are dropped
   double window_factor = 1.0;               // scoring window: the event's half window times this,
   double max_window_s = 60.0;               //   at most this
 };
@@ -103,6 +105,9 @@ using TrackSource = std::function<std::vector<Track>(const Bbox&)>;
 SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& events, const TrackSource& tracks_for, Terrain& terrain,
                             const SearchOptions& o, double region_deg = 3.0, const std::function<void(const std::string&)>& progress = {});
 void judge(SearchResult& r);
+
+// A track's fixes as an ECEF Hermite path (empty with fewer than two usable fixes).
+Path path_of(const Track& tr);
 
 // Modelled curve score of one event for a listener at `o` (ECEF) and recording start
 // `start`: sweeps the rest frequency by +-sweep; returns {score, f0 of the strongest line}.

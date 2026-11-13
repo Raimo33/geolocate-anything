@@ -13,6 +13,7 @@
 //     of that place, where far fewer wrong alignments compete (locate.cpp).
 #pragma once
 
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -44,11 +45,34 @@ struct AircraftOptions {
   int max_days = 3;         // at most this many days fetched per run
 };
 
+// What the dashboard shows of the best answer: each matched aircraft with its track
+// around the closest approach, and each flyover's spectrogram with the curves drawn on it.
+struct FlightView {
+  int event = 0;  // index into detection.events
+  std::string flight, reg, type, desc, owner, year, kind, engine;
+  int engines = 0;
+  double cpa_m = 0, speed = 0, score = 0, fit = 0, f0 = 0, cpa_utc = 0;
+  double cpa_lat = NAN, cpa_lon = NAN, cpa_alt_m = NAN, cpa_track_deg = NAN;  // the aircraft at closest approach
+  std::vector<std::array<double, 4>> track;  // epoch s, lat, lon, alt m (+-10 min, thinned)
+};
+struct SpectrumView {
+  int event = 0;
+  bool matched = false;
+  double t0 = 0, t1 = 0, f_lo = 0, f_hi = 0;  // s from the recording's start, Hz
+  int w = 0, h = 0;
+  std::string pixels;  // base64 of w x h bytes (whitened level 0..255), row 0 at f_hi
+  std::vector<std::vector<std::array<float, 2>>> model;     // per line: (t, f) along the matched aircraft's real path
+  std::vector<std::vector<std::array<float, 2>>> straight;  // per line: the best straight pass (the measurement)
+};
+
 struct AircraftStage {
   Detection detection;
   std::vector<HypothesisResult> tried;
   int best = -1;  // index into tried of the best search
   std::vector<std::string> notes;
+  std::vector<FlightView> flights;
+  std::vector<SpectrumView> spectra;
+  double start_utc = NAN;  // the best answer's start (spectrum times are relative to it)
   const SearchResult* best_result() const { return best >= 0 ? &*tried[std::size_t(best)].result : nullptr; }
 };
 

@@ -383,13 +383,8 @@ static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
   air::AircraftOptions ao;
   if (o.aircraft_box) ao.box = air::Bbox{(*o.aircraft_box)[0], (*o.aircraft_box)[1], (*o.aircraft_box)[2], (*o.aircraft_box)[3]};
   ao.fetch = o.aircraft_fetch;
-  if (hyps.empty()) {
-    air::AircraftStage st;
-    st.notes.push_back("no time to search at: no hum candidate and no --from/--to window");
-    rep.aircraft = std::move(st);
-    return;
-  }
   rep.aircraft = air::run_aircraft(rep.path, hyps, ao);
+  if (hyps.empty()) rep.aircraft->notes.push_back("no time to search at: no hum candidate and no date window");
   const auto* r = rep.aircraft->best_result();
   if (located || !r || r->level < air::AirLevel::Moderate || !rep.trace || r->candidates.empty()) return;
   // The hum, where the aircraft put the recording: only +-6 h of one grid compete now.

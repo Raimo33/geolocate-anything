@@ -252,14 +252,20 @@ are far below what anyone notices, pass through walls and survive phone codecs.
 
 On the recording from the video that inspired this ([colsto](https://www.youtube.com/watch?v=UytYrhYLOKI)),
 searching Long Island for the whole of 2026-09-08 returns the reference place to within
-160 m, the same two aircraft and the start second, in a minute.
+160 m, the same two aircraft and the start second, in a minute. Over the whole continental
+US with only the day known, two flyovers are not enough (the reference place ranks third
+of 32,000, a weak verdict); with the hum's second, the same recording locates strongly.
 
 ### With the hum
 
 `geoloc locate` runs the aircraft stage when ADS-B history is stored: a located hum gives
 the second and the grid, where one flyover suffices; a weak hum gives candidate seconds,
 one of which two flyovers can confirm; without hum, the aircraft's place and time
-narrow the hum search to ± 6 h of one grid.
+narrow the hum search to ± 6 h of one grid. On the reference recording the hum alone is
+strong, and at its second the aircraft find the place over the whole US Eastern grid in
+90 s. The dashboard then shows the matched aircraft on a street map (track, position
+and heading at closest approach, registry details on click) and each flyover's
+spectrogram with the curve modelled from the aircraft's track.
 
 ### Limits
 

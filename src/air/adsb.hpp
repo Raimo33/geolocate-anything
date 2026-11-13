@@ -17,6 +17,8 @@
 #pragma once
 
 #include <array>
+#include <map>
+#include <set>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -63,6 +65,12 @@ class AircraftDb {
  private:
   std::vector<std::pair<std::uint32_t, std::array<char, 4>>> rows_;  // sorted
 };
+
+// Registry details for a few aircraft (one pass over the cached aircraft.csv.gz).
+struct RegistryEntry {
+  std::string reg, type, desc, year, owner;
+};
+std::map<std::uint32_t, RegistryEntry> registry_lookup(const std::set<std::uint32_t>& icaos);
 
 struct Fix {
   double t = 0;           // epoch seconds
