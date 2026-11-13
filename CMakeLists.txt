@@ -65,6 +65,22 @@ endif()
 set(GEOLOC_OPT -O3 -march=${GEOLOC_ARCH} -fno-math-errno -fno-trapping-math -fcx-limited-range)
 
 add_library(geoloc_core STATIC
+  # Slowest first: Ninja starts jobs in this order, so a long one never runs alone at the end.
+  src/web/server.cpp
+  src/cli11_impl.cpp
+  src/enf/match.cpp
+  src/refs/sources_europe.cpp
+  src/json_impl.cpp
+  src/refs/sources.cpp
+  src/air/adsb.cpp
+  src/locate.cpp
+  src/air/search.cpp
+  src/refs/parsers.cpp
+  src/asio_impl.cpp
+  src/refs/seismic_fetch.cpp
+  src/refs/sources_archives.cpp
+  src/net/http.cpp
+  src/enf/extract.cpp
   src/util/time.cpp
   src/util/files.cpp
   src/util/json.cpp
@@ -73,43 +89,28 @@ add_library(geoloc_core STATIC
   src/dsp/filters.cpp
   src/store/codec.cpp
   src/store/store.cpp
-  src/enf/extract.cpp
-  src/enf/match.cpp
   src/cuts.cpp
   src/audio.cpp
   src/grids.cpp
   src/tzclue.cpp
-  src/locate.cpp
   src/air/doppler.cpp
   src/air/spectrogram.cpp
   src/air/events.cpp
-  src/air/adsb.cpp
   src/air/bucket.cpp
   src/air/terrain.cpp
-  src/air/search.cpp
   src/air/fusion.cpp
   src/air/commands.cpp
-  src/net/http.cpp
   src/net/zip.cpp
   src/net/spawn.cpp
   src/net/s3.cpp
-  src/refs/parsers.cpp
   src/refs/sheets.cpp
   src/refs/aemo_annual.cpp
   src/refs/source_util.cpp
-  src/refs/sources.cpp
-  src/refs/sources_europe.cpp
   src/refs/sources_australia.cpp
-  src/refs/sources_archives.cpp
   src/refs/remote.cpp
   src/refs/mseed.cpp
   src/refs/seismic.cpp
-  src/refs/seismic_fetch.cpp
-  src/web/server.cpp
   src/data.cpp
-  src/json_impl.cpp
-  src/asio_impl.cpp
-  src/cli11_impl.cpp
 )
 target_include_directories(geoloc_core PUBLIC src)
 target_include_directories(geoloc_core SYSTEM PUBLIC ${AV_INCLUDE_DIR} ${ZSTD_INCLUDE_DIR} ${FFTW_INCLUDE_DIR} ${ARCHIVE_INCLUDE_DIR}
@@ -135,8 +136,8 @@ target_sources(geoloc_core PRIVATE ${GEOLOC_DATA_STAMP})
 set_property(SOURCE src/data.cpp APPEND PROPERTY INCLUDE_DIRECTORIES ${CMAKE_BINARY_DIR}/gen)
 set_property(SOURCE src/data.cpp APPEND PROPERTY OBJECT_DEPENDS ${GEOLOC_EMBEDDED} ${GEOLOC_DATA_STAMP})
 set_source_files_properties(src/data.cpp PROPERTIES COMPILE_OPTIONS "-Wno-pedantic")
-# Argument parsing runs once per invocation: no need for -O3 there.
-set_source_files_properties(src/cli11_impl.cpp PROPERTIES COMPILE_OPTIONS "-O1")
+# Argument parsing runs once per invocation: unoptimised it compiles in a third of the time.
+set_source_files_properties(src/cli11_impl.cpp PROPERTIES COMPILE_OPTIONS "-O0")
 # The search's hot loops: reassociation lets reductions and prefix sums vectorise (only
 # summation order changes; NaN handling is kept, no -ffinite-math-only). Not used
 # elsewhere: extraction reproduces numpy's exact arithmetic where results depend on it.

@@ -2,10 +2,11 @@
 # Dashboard image (geoloc serve). Reference data lives in a bucket (GEOLOC_GRID_BUCKET): the
 # container downloads it on start and uploads what its refreshes fetch.
 #
-# Railway rebuilds every layer from scratch, so the slow parts live in BuildKit cache
-# mounts that do survive between builds: the apt archives, the FFmpeg install (keyed by
-# version + configure flags) and ccache for the C++ objects. A deploy that touches a few
-# .cpp files recompiles only those. Railway wants cache ids as s/<service id>-<path>.
+# Railway's layer cache and BuildKit cache mounts survive only while a deploy lands on the
+# same builder, so the slow parts live in cache mounts (the apt archives, the FFmpeg install
+# keyed by version + configure flags + compiler, ccache for the C++ objects) and a cold
+# builder still has to be fast: Clang, not GCC (see below). Railway wants cache ids as
+# s/<service id>-<path>.
 #
 # Build stage: the C++ toolchain, the -dev libraries, and a minimal static FFmpeg (only
 # the demuxers/decoders geoloc reads audio with, no network, no programs). Built with
@@ -17,21 +18,25 @@ RUN --mount=type=cache,id=s/6d3bbf92-2dd3-41d1-b65b-3f33ab5232a7-/var/cache/apt,
     --mount=type=cache,id=s/6d3bbf92-2dd3-41d1-b65b-3f33ab5232a7-/var/lib/apt,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      g++ make cmake ninja-build pkg-config nasm ccache curl xz-utils ca-certificates \
+      clang make cmake ninja-build pkg-config nasm ccache curl xz-utils ca-certificates \
       libboost-dev libcli11-dev libcurl4-openssl-dev libzstd-dev libfftw3-dev libarchive-dev libssl-dev zlib1g-dev
+# Clang, not GCC: it compiles this code base ~30% faster (the CPU time goes to the optimiser)
+# and the test suite runs equally fast with either. CI builds with Clang too.
+ENV CC=clang CXX=clang++
 ARG FFMPEG_VERSION=8.0.1
+ARG FFMPEG_URL=https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz
 RUN --mount=type=cache,id=s/6d3bbf92-2dd3-41d1-b65b-3f33ab5232a7-/cache/ffmpeg,target=/cache/ffmpeg <<'EOF'
 set -eu
-FLAGS="--prefix=/opt/ffmpeg --enable-static --disable-shared --enable-pic \
+FLAGS="--cc=clang --prefix=/opt/ffmpeg --enable-static --disable-shared --enable-pic \
   --disable-programs --disable-doc --disable-network --disable-autodetect --enable-pthreads \
   --disable-avdevice --disable-avfilter --disable-swscale --disable-everything \
   --enable-zlib --enable-swresample --enable-protocol=file \
   --enable-demuxer=mov,matroska,ogg,wav,w64,mp3,aac,flac,aiff,caf,avi,asf,mpegts,mpegps,amr \
   --enable-decoder=aac,aac_latm,opus,vorbis,mp3,mp3float,mp2,mp2float,flac,alac,ac3,eac3,wmav1,wmav2,amrnb,amrwb,adpcm_ima_wav,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,pcm_f32le,pcm_f64le,pcm_u8,pcm_alaw,pcm_mulaw \
   --enable-parser=aac,aac_latm,opus,vorbis,mpegaudio,flac,ac3"
-KEY=/cache/ffmpeg/${FFMPEG_VERSION}-$(echo "$FLAGS $(gcc -dumpfullversion)" | sha256sum | cut -c1-16)
+KEY=/cache/ffmpeg/${FFMPEG_VERSION}-$(echo "$FLAGS $(clang -dumpversion)" | sha256sum | cut -c1-16)
 if [ ! -d "$KEY" ]; then
-  curl -fsSL --retry 5 --retry-all-errors https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar xJ -C /tmp
+  curl -fsSL --retry 5 --retry-all-errors "$FFMPEG_URL" | tar xJ -C /tmp
   cd /tmp/ffmpeg-${FFMPEG_VERSION}
   ./configure $FLAGS
   make -j"$(nproc)" >/dev/null
