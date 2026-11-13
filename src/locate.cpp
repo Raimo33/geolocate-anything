@@ -1,4 +1,5 @@
 #include "locate.hpp"
+#include "util/files.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -363,7 +364,10 @@ std::vector<std::string> consistency_checks(const Report& rep) {
 static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
   using AM = AnalyzeOptions::Aircraft;
   if (o.aircraft == AM::Off) return;
-  if (o.aircraft == AM::Auto && air::stored_days().empty() && !o.aircraft_fetch) return;
+  // A server can fetch the ADS-B day a recording needs (GEOLOC_AIRCRAFT_FETCH, at most
+  // GEOLOC_AIRCRAFT_MAX_FETCH days per analysis, default 1).
+  const bool fetch = o.aircraft_fetch || !env("GEOLOC_AIRCRAFT_FETCH").empty();
+  if (o.aircraft == AM::Auto && air::stored_days().empty() && !fetch) return;
   std::vector<air::Hypothesis> hyps;
   const bool located = rep.verdict && match::located(rep.verdict->level) && rep.verdict->candidate;
   if (located) {
@@ -382,7 +386,8 @@ static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
   }
   air::AircraftOptions ao;
   if (o.aircraft_box) ao.box = air::Bbox{(*o.aircraft_box)[0], (*o.aircraft_box)[1], (*o.aircraft_box)[2], (*o.aircraft_box)[3]};
-  ao.fetch = o.aircraft_fetch;
+  ao.fetch = fetch;
+  if (!o.aircraft_fetch && fetch) ao.max_days = std::max(1, std::atoi(env("GEOLOC_AIRCRAFT_MAX_FETCH", "1").c_str()));
   rep.aircraft = air::run_aircraft(rep.path, hyps, ao);
   if (hyps.empty()) rep.aircraft->notes.push_back("no time to search at: no hum candidate and no date window");
   const auto* r = rep.aircraft->best_result();

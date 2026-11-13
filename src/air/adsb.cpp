@@ -844,6 +844,19 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
   if (!of) throw std::runtime_error("cannot write " + tmp_out.string());
   fs::rename(tmp_out, out);
   day_coverage(day, true);
+  atomic_write(adsb_dir() / (day + ".used"), "");
+  // A bounded store (a server's volume): keep the GEOLOC_ADSB_KEEP_DAYS days used last.
+  if (const int keep = std::atoi(env("GEOLOC_ADSB_KEEP_DAYS").c_str()); keep > 0) {
+    auto used = [](const std::string& d) {
+      std::error_code ec;
+      auto t = fs::last_write_time(adsb_dir() / (d + ".used"), ec);
+      return ec ? fs::last_write_time(day_path(d)) : t;
+    };
+    auto days = stored_days();
+    std::sort(days.begin(), days.end(), [&](auto& a, auto& b) { return used(a) > used(b); });
+    for (std::size_t i = std::size_t(keep); i < days.size(); ++i)
+      for (const char* ext : {".trk", ".cov", ".used"}) fs::remove(adsb_dir() / (days[i] + ext));
+  }
   st.bytes_out = head.size() + body;
   sp = MappedFile();
   fs::remove(spill_path);
@@ -857,6 +870,10 @@ std::vector<Track> load_tracks(double t0, double t1, const std::optional<Bbox>& 
     const std::string day = iso_date(d * 86400);
     if (!has_day(day)) continue;
     DayFile df(day_path(day));
+    {
+      std::error_code ec;  // last use, for a bounded store's eviction
+      fs::last_write_time(adsb_dir() / (day + ".used"), fs::file_time_type::clock::now(), ec);
+    }
     for (auto& e : df.idx) {
       if (e.t1 < t0 - 300 || e.t0 > t1 + 300) continue;
       if (bbox && (e.east < bbox->west || e.west > bbox->east || e.north < bbox->south || e.south > bbox->north)) continue;

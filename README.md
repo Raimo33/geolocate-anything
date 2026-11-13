@@ -316,7 +316,10 @@ sources (`seismic_cn_*`, `seismic_swis`, `seismic_darwin`), whose decoding costs
 are backfilled on a separate machine and pushed (`refs push`), never refreshed by the
 dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_GEOFON_REFRESH` enables `seismic_estonia` (a closed period, ~4 GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
 2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);
-`GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
+`GEOLOC_AIRCRAFT_FETCH` lets `locate` (and so the dashboard) download the ADSB.lol day a
+recording needs (~4 GB streamed, ~0.7 GB kept; at most `GEOLOC_AIRCRAFT_MAX_FETCH` days per
+analysis, default 1), and `GEOLOC_ADSB_KEEP_DAYS` keeps only that many days, the ones used
+last (for a bounded volume); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
 cores, 4 to 8), and how many threads `locate` uses (default: every core): a search
 spreads its blocks over them (~30 MB each), long compressed audio is decoded and
 resampled in 30 s chunks on them (the same samples as one pass), and the faint-hum

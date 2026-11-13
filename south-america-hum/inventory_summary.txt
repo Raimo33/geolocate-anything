@@ -1,0 +1,328 @@
+                        </a>|| st=1 ..9999 lat=0.0 lon=0.0
+                </a>|| st=1 ..9999 lat=0.0 lon=0.0
+            <a class="header__logo" href="/" accesskey="1"><img src="/static/img/logo-csn.png" alt="Centro Sismológico Nacional" /></a>|| st=1 ..9999 lat=0.0 lon=0.0
+                        <a class="wp-block-button__link has-blue-background-color has-background wp-element-button" href="https://www.csn.uchile.cl/" style="border-radius:3px" target="_blank" rel="noreferrer noopener">|| st=1 ..9999 lat=0.0 lon=0.0
+                </address>|| st=1 ..9999 lat=0.0 lon=0.0
+                <address>|| st=1 ..9999 lat=0.0 lon=0.0
+        <a href="/contact">nosotros</a>. Recuerde consultar nuestra sección de|| st=1 ..9999 lat=0.0 lon=0.0
+            <a href="#content" title="Saltar al contenido" style="display: none" accesskey="s">Ir al contenido</a>|| st=1 ..9999 lat=0.0 lon=0.0
+        <a href="/faq">preguntas frecuentes</a> antes que todo.|| st=1 ..9999 lat=0.0 lon=0.0
+                            <a href="javascript:history.back()"|| st=1 ..9999 lat=0.0 lon=0.0
+                </article>|| st=1 ..9999 lat=0.0 lon=0.0
+                <article>|| st=1 ..9999 lat=0.0 lon=0.0
+                </aside>|| st=1 ..9999 lat=0.0 lon=0.0
+                <aside>|| st=1 ..9999 lat=0.0 lon=0.0
+                <a tabindex="1" target="_blank" title="Universidad de Chile" href="//www.uchile.cl/">|| st=1 ..9999 lat=0.0 lon=0.0
+                <a tabindex="2" target="_blank" title="Facultad de Ciencias Físicas y Matemáticas" href="//ingenieria.uchile.cl/">FCFM</a>|| st=1 ..9999 lat=0.0 lon=0.0
+                <a tabindex="3" target="_blank" title="Departamento de Geofísica" href="//geofisica.uchile.cl/">DGF</a>|| st=1 ..9999 lat=0.0 lon=0.0
+                <a tabindex="4" target="_blank" title="Webmail del Centro Sismológico Nacional" href="//mail.csn.uchile.cl/">Correo web</a>|| st=1 ..9999 lat=0.0 lon=0.0
+                <a tabindex="5" target="_blank" title="Últimos sismos" href="//www.sismologia.cl/">Sismología</a>|| st=1 ..9999 lat=0.0 lon=0.0
+                <a tabindex="6" target="_blank" title="Atlas de shakemaps" href="//shakemaps.csn.uchile.cl/">Atlas de shakemaps</a>|| st=1 ..9999 lat=0.0 lon=0.0
+                <a tabindex="7" target="_blank" title="Tensores de momento basados en la W-phase" href="//www.csn.uchile.cl/focalmechanism/">W-Phase</a>|| st=1 ..9999 lat=0.0 lon=0.0
+    <!-- Barra UCHILE -->|| st=1 ..9999 lat=0.0 lon=0.0
+    </body>|| st=1 ..9999 lat=0.0 lon=0.0
+    <body>|| st=1 ..9999 lat=0.0 lon=0.0
+                    </div>|| st=1 ..9999 lat=0.0 lon=0.0
+                </div>|| st=1 ..9999 lat=0.0 lon=0.0
+            </div>|| st=1 ..9999 lat=0.0 lon=0.0
+        </div>|| st=1 ..9999 lat=0.0 lon=0.0
+    </div>|| st=1 ..9999 lat=0.0 lon=0.0
+</div>|| st=1 ..9999 lat=0.0 lon=0.0
+<div class="bloque">|| st=1 ..9999 lat=0.0 lon=0.0
+            <div class="container">|| st=1 ..9999 lat=0.0 lon=0.0
+    <div class="container">|| st=1 ..9999 lat=0.0 lon=0.0
+        <div class="container header__bottom">|| st=1 ..9999 lat=0.0 lon=0.0
+        <div class="container header__top">|| st=1 ..9999 lat=0.0 lon=0.0
+        <div class="footer__columns">|| st=1 ..9999 lat=0.0 lon=0.0
+            <div class="footer__links">|| st=1 ..9999 lat=0.0 lon=0.0
+            <div class="footer__text">|| st=1 ..9999 lat=0.0 lon=0.0
+    <div class="header__banner">|| st=1 ..9999 lat=0.0 lon=0.0
+<div class="info">|| st=1 ..9999 lat=0.0 lon=0.0
+        <div class="main-container">|| st=1 ..9999 lat=0.0 lon=0.0
+        <div class="uchile__container">|| st=1 ..9999 lat=0.0 lon=0.0
+    <div class="uchile__header">|| st=1 ..9999 lat=0.0 lon=0.0
+            <div class="uchile__left">|| st=1 ..9999 lat=0.0 lon=0.0
+            <div class="uchile__right">|| st=1 ..9999 lat=0.0 lon=0.0
+                    <div class="wp-block-button borde-azul">|| st=1 ..9999 lat=0.0 lon=0.0
+                <div class="wp-block-buttons is-layout-flex wp-block-buttons-is-layout-flex">|| st=1 ..9999 lat=0.0 lon=0.0
+<!doctype html>|| st=1 ..9999 lat=0.0 lon=0.0
+        <footer>|| st=1 ..9999 lat=0.0 lon=0.0
+</footer>|| st=1 ..9999 lat=0.0 lon=0.0
+    </form>|| st=1 ..9999 lat=0.0 lon=0.0
+    <form name="filter" action="/events" method="post">|| st=1 ..9999 lat=0.0 lon=0.0
+                    </h1>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <h1 class="icon-dot-circled">Página no encontrada.|| st=1 ..9999 lat=0.0 lon=0.0
+                    <h1 class="icon-search">Filtro de registros</h1>|| st=1 ..9999 lat=0.0 lon=0.0
+                <h3>Universidad de Chile</h3>|| st=1 ..9999 lat=0.0 lon=0.0
+                <h4>Centro Sismológico Nacional</h4>|| st=1 ..9999 lat=0.0 lon=0.0
+                <h4>Facultad de Ciencias Físicas y Matemáticas</h4>|| st=1 ..9999 lat=0.0 lon=0.0
+    <head>|| st=1 ..9999 lat=0.0 lon=0.0
+</head>|| st=1 ..9999 lat=0.0 lon=0.0
+            <header>|| st=1 ..9999 lat=0.0 lon=0.0
+</header>|| st=1 ..9999 lat=0.0 lon=0.0
+</html>#Network | Channel | SampleRate  st=1  StartTime.. EndTime lat=0.0 lon=0.0
+<html lang="es">|| st=1 ..9999 lat=0.0 lon=0.0
+                    <img src="/static/img/logo-uchile-2x.png" alt="Universidad de Chile" />|| st=1 ..9999 lat=0.0 lon=0.0
+                    <li><a href="/">Inicio</a></li>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <li><a href="/contact">Contacto</a></li>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <li><a href="/faq">Preguntas Frecuentes</a></li>|| st=1 ..9999 lat=0.0 lon=0.0
+  <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,400;0,500;0,700;1,400;1,500;1,700&display=swap" rel="stylesheet">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="alternate" type="application/rss+xml" href="https://evtdb.csn.uchile.cl/feed" title="EvtDB">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="apple-touch-icon" href="https://uchile.cl/.resources/portal-uchile/apple-touch-icon.png" sizes="180x180">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="icon" href="https://uchile.cl/.resources/portal-uchile/favicon-16x16.png" type="image/png" sizes="16x16">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="icon" href="https://uchile.cl/.resources/portal-uchile/favicon-32x32.png" type="image/png" sizes="32x32">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="mask-icon" href="https://uchile.cl/.resources/portal-uchile/safari-pinned-tab.svg" color="#324366">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="preconnect" href="https://fonts.googleapis.com">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="shortcut icon" href="https://uchile.cl/.resources/portal-uchile/favicon.ico" type="image/x-icon">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="stylesheet" href="/static/css/extras.css" type="text/css" media="all">|| st=1 ..9999 lat=0.0 lon=0.0
+  <link rel="stylesheet" id="uchilecsn-style-css" href="/static/css/style.css" type="text/css" media="all">|| st=1 ..9999 lat=0.0 lon=0.0
+            </main>|| st=1 ..9999 lat=0.0 lon=0.0
+            <main id="page">|| st=1 ..9999 lat=0.0 lon=0.0
+  <meta charset="utf-8">|| st=1 ..9999 lat=0.0 lon=0.0
+  <meta name="author" content="Centro Sismológico Nacional">|| st=1 ..9999 lat=0.0 lon=0.0
+  <meta name="description" content="Centro Sismológico Nacional">|| st=1 ..9999 lat=0.0 lon=0.0
+  <meta name="msapplication-TileColor" content="#ffffff">|| st=1 ..9999 lat=0.0 lon=0.0
+  <meta name="theme-color" content="#324366">|| st=1 ..9999 lat=0.0 lon=0.0
+  <meta name="viewport" content="width=device-width, initial-scale=1">|| st=1 ..9999 lat=0.0 lon=0.0
+        </nav>|| st=1 ..9999 lat=0.0 lon=0.0
+        <nav class="header__nav">|| st=1 ..9999 lat=0.0 lon=0.0
+                    <p> <a href="/">Volver</a> </p>|| st=1 ..9999 lat=0.0 lon=0.0
+    </p>|| st=1 ..9999 lat=0.0 lon=0.0
+    <p>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <p> Lo sentimos, el recurso pedido no existe. </p>|| st=1 ..9999 lat=0.0 lon=0.0
+  <script type='text/javascript' src="/static/js/sorttable.js"></script>|| st=1 ..9999 lat=0.0 lon=0.0
+            </section>|| st=1 ..9999 lat=0.0 lon=0.0
+            <section id="block-7" class="widget widget_block">|| st=1 ..9999 lat=0.0 lon=0.0
+                        </span>|| st=1 ..9999 lat=0.0 lon=0.0
+                        <span class="boton">|| st=1 ..9999 lat=0.0 lon=0.0
+        <strong>Acerca de esta página.</strong>|| st=1 ..9999 lat=0.0 lon=0.0
+        </table>|| st=1 ..9999 lat=0.0 lon=0.0
+        <table>|| st=1 ..9999 lat=0.0 lon=0.0
+            </tbody>|| st=1 ..9999 lat=0.0 lon=0.0
+            <tbody>|| st=1 ..9999 lat=0.0 lon=0.0
+		    <td><input class="filter" id="id_date_max" name="max_date" size="7" type="text" pattern="\d{4}-(\d{2}-\d{2}?)?" value="2026-11-09"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_date_min" name="min_date" size="7" type="text" pattern="\d{4}-(\d{2}-\d{2}?)?" value="2012-01-01"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_depth_max" name="max_depth" size="7" type="text" pattern="\d{1,3}(\.\d+)?" value="500"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_depth_min" name="min_depth" size="7" type="text" pattern="\d{1,3}(\.\d+)?" value="0"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_lat_max" name="max_lat" size="7" type="text" pattern="-\d{1,3}(\.\d+)?" value="-18"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_lat_min" name="min_lat" size="7" type="text" pattern="-\d{1,3}(\.\d+)?" value="-56"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_lon_max" name="max_lon" size="7" type="text" pattern="-\d{1,3}(\.\d+)?" value="-66"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_lon_min" name="min_lon" size="7" type="text" pattern="-\d{1,3}(\.\d+)?" value="-110"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_mag_max" name="max_mag" size="7" type="text" pattern="\d(\.\d+)?" value="9"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td><input class="filter" id="id_mag_min" name="min_mag" size="7" type="text" pattern="\d(\.\d+)?" value="3"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td>Fecha:</td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td>Latitud:</td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td>Longitud:</td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td>Magnitud:</td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td>Profundidad:</td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td class="icon-info-circled"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td class="icon-info-circled" title="Grados (en el territorio chileno)"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td class="icon-info-circled" title="Kilómetros (no negativo)"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td class="icon-info-circled" title="YYYY-MM-DD"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <td colspan="4"><input type="submit" name="filter" value="Buscar"></td>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <th></th>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <th>Máx</th>|| st=1 ..9999 lat=0.0 lon=0.0
+                    <th>Mín</th>|| st=1 ..9999 lat=0.0 lon=0.0
+  <title>Centro Sismológico Nacional </title>|| st=1 ..9999 lat=0.0 lon=0.0
+                </tr>|| st=1 ..9999 lat=0.0 lon=0.0
+                <tr>|| st=1 ..9999 lat=0.0 lon=0.0
+                </ul>|| st=1 ..9999 lat=0.0 lon=0.0
+        </ul>|| st=1 ..9999 lat=0.0 lon=0.0
+        <ul id="links-footer-menu" class="footer__nav">|| st=1 ..9999 lat=0.0 lon=0.0
+                <ul id="main-menu" class="menu">|| st=1 ..9999 lat=0.0 lon=0.0
+                <ul id="menu-footer-links" class="menu">|| st=1 ..9999 lat=0.0 lon=0.0
+|| st=1 ..9999 lat=0.0 lon=0.0
+1P|HHZ|100.0 st=30 2018-11-27..2021-03-10 lat=-50.2 lon=-72.9
+1P|HHZ|200.0 st=16 2018-11-04..2020-07-01 lat=-49.6 lon=-71.9
+1U|SHZ|50.0 st=6 2018-11-10..2022-03-08 lat=-22.3 lon=-67.2
+1X|DPZ|250.0 st=381 2022-11-29..2023-05-11 lat=-35.1 lon=-69.9
+22|EPZ|200.0 st=11 2023-10-27..2024-01-15 lat=-32.7 lon=-70.5
+2B|HHZ|100.0 st=30 2007-11-23..2009-10-18 lat=-26.2 lon=-66.8
+2G|HHZ|200.0 st=6 2016-11-09..2016-12-01 lat=-25.2 lon=-68.5
+2N|DPZ|250.0 st=485 2022-03-10..2022-04-15 lat=0.4 lon=-79.9
+2S|HHZ|100.0 st=18 2016-06-04..2017-08-20 lat=-25.8 lon=-64.7
+2V|HHZ|100.0 st=20 2019-06-24..2020-01-18 lat=-27.3 lon=-70.3
+3A|HHZ|100.0 st=22 2010-03-28..2012-12-30 lat=-37.8 lon=-72.6
+3B|DPZ|250.0 st=1021 2015-11-09..2015-11-27 lat=8.2 lon=-71.5
+3C|HHZ|100.0 st=83 2022-07-27..2025-12-31 lat=5.5 lon=-74.8
+3D|HHZ|100.0 st=23 2014-04-11..2016-12-31 lat=-21.1 lon=-69.8
+3E|EPZ|200.0 st=16 2025-04-03..2026-12-31 lat=-33.6 lon=-70.1
+3H|HHZ|100.0 st=34 2014-03-06..2015-06-15 lat=-39.0 lon=-71.7
+3Y|HHZ|100.0 st=12 2020-05-14..2022-04-07 lat=-29.8 lon=-70.7
+4Q|HHZ|100.0 st=19 2023-12-11..2025-12-31 lat=-22.1 lon=-69.0
+4Q|HHZ|200.0 st=1 2023-12-11..2025-12-31 lat=-22.1 lon=-70.2
+4Y|HHZ|100.0 st=10 2022-07-19..2023-02-24 lat=-30.5 lon=-71.5
+5C|HHZ|100.0 st=22 2015-11-06..2016-11-01 lat=-31.3 lon=-71.1
+5E|HHZ|200.0 st=30 2011-01-01..2013-12-31 lat=-21.4 lon=-69.8
+5R|EHZ|200.0 st=29 2023-02-12..2023-06-18 lat=-26.0 lon=-70.4
+5S|HHZ|100.0 st=12 2023-01-01..2026-12-31 lat=-30.7 lon=-71.3
+6B|HHZ|100 st=26 2022-03-02..2024-12-14 lat=-14.9 lon=-74.4
+7F|HHZ|100.0 st=5 2013-10-13..2014-03-22 lat=-23.4 lon=-48.2
+7F|SHZ|400.0 st=15 2018-10-21..2018-11-06 lat=-20.8 lon=-70.2
+8A|FHZ|1000.0 st=1 2013-07-13..2013-07-22 lat=-1.5 lon=-78.4
+8E|HHZ|100.0 st=6 2014-01-01..2015-12-31 lat=-23.4 lon=-67.7
+8F|EHZ|100 st=13 2016-11-02..2016-11-12 lat=5.4 lon=-54.1
+8F|HHZ|100.0 st=13 2005-10-29..2010-03-28 lat=-21.2 lon=-69.5
+8F|HHZ|200.0 st=31 2005-11-01..2012-03-05 lat=-20.9 lon=-69.2
+8G|HHZ|100.0 st=20 2016-05-01..2017-05-10 lat=0.1 lon=-79.9
+8G|HHZ|200.0 st=25 2013-06-20..2015-10-01 lat=-23.3 lon=-70.3
+9C|HHZ|80 st=3 2019-06-30..2026-12-31 lat=-27.2 lon=-70.5
+9D|EPZ|100.0 st=3539 2014-02-20..2014-03-09 lat=8.9 lon=-70.7
+AM|EHZ|100.0 st=1 2020-10-23..9999 lat=-16.3 lon=-68.1
+AS|SHZ|20.0 st=1 1976-09-08..1993-09-28 lat=-16.3 lon=-68.1
+AX|EHZ|100.0 st=1 2014-01-01..9999 lat=12.4 lon=-69.9
+AX|ENZ|100.0 st=1 2015-01-01..9999 lat=12.4 lon=-69.9
+                    Beauchef 850, Santiago, Chile || st=1 ..9999 lat=0.0 lon=0.0
+BL|EHZ|100.0 st=7 1987-08-20..9999 lat=-22.5 lon=-44.5
+BL|HHZ|100.0 st=41 1994-12-05..9999 lat=-20.9 lon=-49.2
+BL|HHZ|125.0 st=1 2013-02-19..2013-03-04 lat=-23.0 lon=-44.4
+BL|HHZ|200.0 st=37 1997-03-26..9999 lat=-19.6 lon=-47.9
+BL|HHZ|250.0 st=6 2006-03-23..2012-07-21 lat=-21.1 lon=-48.6
+BL|HHZ|500.0 st=19 1988-03-07..2013-01-31 lat=-21.1 lon=-48.4
+BL|HLZ|100.0 st=1 1995-03-28..1995-06-16 lat=-21.5 lon=-57.5
+BL|HLZ|200.0 st=1 2000-05-09..2000-08-24 lat=-23.0 lon=-50.4
+BL|SHZ|100.0 st=3 2002-11-02..2004-02-06 lat=-21.9 lon=-47.7
+BL|SHZ|10.0 st=12 1999-10-07..2009-08-04 lat=-19.0 lon=-50.5
+BL|SHZ|200.0 st=6 1999-01-23..2006-09-11 lat=-19.9 lon=-51.4
+BL|SHZ|31.25 st=1 2003-04-22..2004-05-20 lat=-1.1 lon=-47.6
+BL|SHZ|50.0 st=13 1999-01-23..2007-03-03 lat=-19.1 lon=-50.2
+BR|HHZ|100.0 st=33 2002-09-24..9999 lat=-8.2 lon=-55.0
+BV|EHZ|100.0 st=4 2021-01-25..9999 lat=-17.3 lon=-66.9
+C|HHZ|100.0 st=10 2002-04-30..9999 lat=-35.9 lon=-71.5
+C|HNZ|0.0 st=1 2010-02-18..2011-12-31 lat=-33.5 lon=-70.5
+C|HNZ|100.0 st=20 2002-04-11..9999 lat=-36.1 lon=-71.2
+C|HNZ|200.0 st=2 2010-08-03..9999 lat=-37.0 lon=-72.6
+C|SHZ|200.0 st=1 2010-03-05..2010-07-21 lat=-36.0 lon=-72.2
+C|SHZ|50.0 st=23 1999-11-25..9999 lat=-34.9 lon=-70.8
+C1|HHZ|100.0 st=92 2012-08-13..9999 lat=-35.4 lon=-71.4
+C1|HLZ|100.0 st=1 2017-01-27..9999 lat=-33.7 lon=-70.5
+C1|HNZ|100.0 st=75 2012-08-13..9999 lat=-35.6 lon=-71.3
+C1|HNZ|200.0 st=10 2015-08-14..9999 lat=-36.7 lon=-71.6
+                               class="icon-left-big"></a>|| st=1 ..9999 lat=0.0 lon=0.0
+CM|EHZ|100.0 st=35 1993-06-01..9999 lat=4.8 lon=-75.2
+CM|EHZ|60.0 st=22 1992-02-21..2012-07-28 lat=5.0 lon=-75.2
+CM|HHZ|100.0 st=151 2007-06-30..9999 lat=5.8 lon=-74.7
+CM|HHZ|512000.0 st=1 2014-05-02..9999 lat=2.6 lon=-76.0
+CM|HLZ|200.0 st=7 2016-04-09..9999 lat=5.8 lon=-75.6
+CM|HNZ|100.0 st=6 2011-06-16..9999 lat=5.3 lon=-75.3
+CM|HNZ|200.0 st=162 1994-06-22..9999 lat=4.9 lon=-75.1
+CU|HHZ|100.0 st=2 2018-05-09..9999 lat=10.8 lon=-69.7
+CU|HLZ|100.0 st=2 2006-12-02..2010-02-10 lat=10.6 lon=-70.7
+CU|HNZ|100.0 st=2 2010-02-10..9999 lat=10.6 lon=-70.7
+CX|HHZ|100.0 st=27 2006-02-21..9999 lat=-21.2 lon=-69.8
+CX|HLZ|100.0 st=29 2006-02-21..9999 lat=-21.1 lon=-69.8
+DT|EHZ|100.0 st=3 1965-01-01..1987-06-10 lat=-14.6 lon=-73.0
+DT|HHZ|100.0 st=3 1965-01-01..1987-06-10 lat=-14.6 lon=-73.0
+DT|HLZ|100.0 st=3 1965-01-01..1987-06-10 lat=-14.6 lon=-73.0
+DW|SHZ|20.0 st=1 1982-06-08..1993-06-16 lat=-15.7 lon=-47.9
+EC|HHZ|100.0 st=22 2011-08-24..9999 lat=-1.4 lon=-78.9
+EC|HNZ|100.0 st=6 2012-05-02..9999 lat=-3.6 lon=-79.6
+        En el caso de encontrar algún error, contáctese con|| st=1 ..9999 lat=0.0 lon=0.0
+        Éstos son los registros de la información instrumental de eventos específicos del catálogo preparado por los sismólogos del CSN. Para información sobre los últimos eventos publicados por el Centro, dirigirse a la <a href="http://www.sismologia.cl/">página oficial</a>.|| st=1 ..9999 lat=0.0 lon=0.0
+G|EHZ|100.0 st=1 1996-04-01..9999 lat=-20.3 lon=-70.0
+G|HHZ|100.0 st=4 2024-10-07..9999 lat=-24.6 lon=-63.4
+G|HHZ|100 st=4 2024-10-07..2500-12-31 lat=-24.6 lon=-63.4
+G|HNZ|100.0 st=3 2011-03-16..9999 lat=-32.6 lon=-70.8
+G|HNZ|100 st=3 2011-03-16..2500-12-31 lat=-32.6 lon=-70.8
+GE|HHZ|100.0 st=3 2009-04-10..9999 lat=-24.3 lon=-67.6
+GE|HHZ|80.0 st=2 1996-12-02..2009-04-09 lat=-19.1 lon=-68.6
+GE|HLZ|100.0 st=1 2018-11-09..9999 lat=-24.2 lon=-66.3
+GE|HLZ|80.0 st=1 1996-12-02..2001-04-30 lat=-22.6 lon=-68.9
+GE|HNZ|100.0 st=2 2009-04-10..9999 lat=-25.5 lon=-67.5
+GE|HNZ|80.0 st=1 2001-04-30..2009-04-09 lat=-22.6 lon=-68.9
+GE|SHZ|40.0 st=1 1996-12-02..1999-12-20 lat=-22.6 lon=-68.9
+GT|HHZ|100.0 st=1 2022-09-19..9999 lat=-15.6 lon=-48.0
+GT|SHZ|20.0 st=4 1993-07-22..2002-12-03 lat=-24.7 lon=-61.0
+GT|SHZ|40.0 st=3 2002-04-23..9999 lat=-24.9 lon=-66.0
+II|EHZ|100.0 st=1 1993-11-26..1996-03-06 lat=-12.0 lon=-76.8
+II|ENZ|100.0 st=3 1996-02-16..9999 lat=-39.1 lon=-58.9
+II|SHZ|40.0 st=1 1996-03-07..2006-06-02 lat=-12.0 lon=-76.8
+IQ|HHZ|100.0 st=21 2009-05-14..9999 lat=-20.3 lon=-69.7
+IQ|HHZ|200.0 st=12 2013-11-08..9999 lat=-20.6 lon=-69.4
+IU|HHZ|100.0 st=8 2009-04-01..9999 lat=-11.1 lon=-62.0
+IU|HHZ|80.0 st=8 1996-12-02..2014-08-04 lat=-11.6 lon=-62.8
+IU|HLZ|80.0 st=8 1994-06-06..2014-08-04 lat=-11.2 lon=-66.8
+IU|HNZ|100.0 st=8 2009-04-01..9999 lat=-10.7 lon=-68.0
+IU|HNZ|80.0 st=7 2000-10-24..2010-01-17 lat=-8.8 lon=-64.1
+IU|SHZ|40.0 st=1 1996-12-02..1999-12-20 lat=-22.6 lon=-68.9
+NB|HHZ|100.0 st=4 2007-04-11..2008-07-27 lat=-5.7 lon=-38.2
+NB|HHZ|500.0 st=3 2007-04-11..2008-07-30 lat=-6.3 lon=-37.4
+NQ|HNZ|200.0 st=1 2015-08-01..9999 lat=-12.1 lon=-77.0
+OC|HHZ|100.0 st=1 2017-03-21..9999 lat=-30.9 lon=-69.1
+ON|HHZ|100.0 st=20 2011-04-04..9999 lat=-21.5 lon=-43.3
+PR|HHZ|100.0 st=1 2024-03-20..9999 lat=12.5 lon=-70.0
+PR|HNZ|100.0 st=1 2024-03-20..9999 lat=12.5 lon=-70.0
+RI|EHZ|100.0 st=1 2016-10-31..9999 lat=-32.2 lon=-65.0
+RI|HHZ|100.0 st=1 2016-10-31..9999 lat=-32.2 lon=-65.0
+                            Sitio institucional|| st=1 ..9999 lat=0.0 lon=0.0
+SR|SHZ|20.0 st=1 1978-01-13..1987-11-12 lat=4.6 lon=-74.0
+TO|HHZ|100.0 st=141 2007-05-28..2013-12-31 lat=-15.0 lon=-71.8
+TR|EHZ|100.0 st=11 1965-01-01..9999 lat=11.1 lon=-61.4
+TR|HHZ|100.0 st=3 1979-01-01..9999 lat=11.0 lon=-61.6
+TR|HLZ|100.0 st=3 1979-01-01..9999 lat=11.0 lon=-61.6
+VE|HHZ|100.0 st=50 2003-01-01..9999 lat=9.7 lon=-67.1
+VL|HHZ|100.0 st=17 2017-05-10..9999 lat=-13.4 lon=-46.8
+VL|HHZ|250.0 st=1 2022-06-02..2022-06-28 lat=-19.5 lon=-44.3
+WA|HHZ|100.0 st=1 2011-01-01..9999 lat=-31.5 lon=-68.7
+WA|HNZ|100.0 st=1 2025-03-11..9999 lat=-31.5 lon=-68.7
+WC|HHZ|100.0 st=1 2006-10-30..9999 lat=12.2 lon=-69.0
+WI|HHZ|100.0 st=1 2014-03-21..9999 lat=12.5 lon=-61.4
+WI|HHZ|100 st=1 2014-03-21..2500-12-31 lat=12.5 lon=-61.4
+WI|HNZ|100.0 st=1 2014-03-21..9999 lat=12.5 lon=-61.4
+WI|HNZ|100 st=1 2014-03-21..2500-12-31 lat=12.5 lon=-61.4
+X9|DPZ|400.0 st=54 2025-05-23..2026-12-31 lat=-22.3 lon=-68.0
+X9|EHZ|100.0 st=11 2024-01-03..2024-06-03 lat=-54.9 lon=-68.1
+XA|SHZ|100.0 st=40 1987-08-25..1988-12-30 lat=-31.5 lon=-67.9
+XB|HHZ|100.0 st=3 1997-01-06..1997-02-05 lat=-52.6 lon=-71.9
+XC|HHZ|100.0 st=64 2016-03-01..9999 lat=-22.4 lon=-56.3
+XC|HHZ|200.0 st=1 2016-05-12..2016-10-07 lat=-22.0 lon=-56.0
+XE|DPZ|250.0 st=298 2020-10-21..2020-11-27 lat=0.1 lon=-79.8
+XF|HHZ|100.0 st=60 2021-08-13..2022-11-18 lat=0.3 lon=-79.4
+XJ|HHZ|100.0 st=53 2004-01-20..2006-12-16 lat=-46.3 lon=-72.3
+XM|HHZ|100.0 st=77 2022-06-20..2024-05-09 lat=-29.7 lon=-68.0
+XN|DPZ|250.0 st=419 2022-06-18..2023-01-06 lat=-23.4 lon=-66.7
+XO|HHZ|100.0 st=49 1995-08-08..1995-10-11 lat=-23.5 lon=-70.0
+XP|HHZ|1000.0 st=1 2011-10-14..2012-03-12 lat=-22.3 lon=-67.6
+XP|HHZ|100.0 st=42 2010-04-12..2013-10-12 lat=-22.7 lon=-67.4
+XS|EPZ|125.0 st=2 1998-04-21..1998-12-31 lat=-2.0 lon=-78.3
+XS|HHZ|100 st=30 2010-03-10..2011-04-28 lat=-35.8 lon=-72.2
+XS|HHZ|125.0 st=2 1998-04-21..1998-12-31 lat=-2.0 lon=-78.3
+XS|HNZ|100 st=17 2010-03-08..2011-01-15 lat=-34.7 lon=-71.9
+XT|EHZ|100.0 st=11 2003-01-01..2005-12-31 lat=11.1 lon=-61.4
+XT|HHZ|100.0 st=30 2003-01-01..2005-12-31 lat=9.0 lon=-64.5
+XT|HLZ|100.0 st=3 2003-01-01..2005-12-31 lat=11.0 lon=-61.6
+XV|EPZ|100.0 st=15 1997-10-09..1998-12-31 lat=9.3 lon=-79.8
+XV|HHZ|100.0 st=5 2021-03-05..2022-11-16 lat=2.7 lon=-59.5
+XV|HHZ|200.0 st=2 2021-03-06..2022-02-26 lat=2.7 lon=-59.5
+XY|HHZ|100.0 st=58 2010-02-28..2010-09-30 lat=-36.3 lon=-72.2
+XY|HNZ|200.0 st=4 2010-02-28..2010-09-30 lat=-36.8 lon=-73.1
+XZ|HHZ|100 st=26 2021-05-27..2024-02-16 lat=-28.3 lon=-70.7
+Y6|HHZ|100.0 st=60 2020-11-22..2022-12-31 lat=-26.6 lon=-70.4
+Y9|HHZ|100.0 st=23 2007-11-27..2008-05-02 lat=-23.0 lon=-70.0
+YL|DPZ|200.0 st=298 2015-09-24..2015-10-01 lat=-5.3 lon=-42.6
+YM|EHZ|100.0 st=6 2011-01-02..2012-12-01 lat=-39.4 lon=-71.9
+YM|HHZ|100.0 st=9 2010-01-01..2012-12-01 lat=-39.4 lon=-71.9
+YM|SHZ|50.0 st=4 2010-04-02..2012-03-03 lat=-39.4 lon=-71.9
+YO|HHZ|100.0 st=7 2009-06-09..2009-06-21 lat=-1.4 lon=-78.5
+YS|SHZ|50.0 st=27 2009-04-20..2012-03-24 lat=-20.8 lon=-68.1
+YU|HHZ|100.0 st=65 2016-03-15..2018-05-02 lat=10.0 lon=-72.0
+Z9|EHZ|100.0 st=1 2026-06-16..2030-12-31 lat=-20.5 lon=-47.4
+ZA|HHZ|100.0 st=102 1994-01-28..2004-01-24 lat=-22.4 lon=-67.5
+ZA|HHZ|50.0 st=16 2002-08-28..2004-01-29 lat=-23.3 lon=-66.8
+ZB|HHZ|100.0 st=58 1997-08-20..1997-11-21 lat=-23.8 lon=-66.4
+ZE|CNZ|250 st=10 2018-08-06..2018-08-07 lat=-0.2 lon=-78.5
+ZE|EHZ|200 st=17 2018-08-06..2018-08-07 lat=-0.2 lon=-78.5
+ZE|EPZ|200 st=5 2018-08-06..2018-08-06 lat=-0.2 lon=-78.5
+ZE|HHZ|100.0 st=34 1996-11-28..1997-12-31 lat=-21.5 lon=-68.5
+ZE|HHZ|200.0 st=42 2010-03-17..2011-10-21 lat=-34.4 lon=-71.8
+ZE|HHZ|200 st=9 2018-08-06..2018-08-07 lat=-0.2 lon=-78.5
+ZE|HNZ|200 st=5 2018-08-06..2018-08-06 lat=-0.2 lon=-78.5
+ZN|DPZ|250.0 st=56 2026-01-06..2026-01-20 lat=-40.5 lon=-72.2
+ZP|HHZ|100.0 st=100 1999-04-24..2001-11-29 lat=-38.1 lon=-72.0
+ZQ|HHZ|100.0 st=5 2004-02-03..2005-04-03 lat=-26.7 lon=-67.7
+ZR|EHZ|100.0 st=12 2016-01-01..2018-03-31 lat=-36.1 lon=-70.5
+ZR|GHZ|1000.0 st=100 2012-10-15..2012-10-27 lat=-22.3 lon=-68.0
+ZR|HHZ|100.0 st=28 2015-01-01..2018-03-31 lat=-36.1 lon=-70.5
+ZV|EHZ|100.0 st=39 2012-01-06..2013-01-11 lat=-35.4 lon=-69.5
+ZW|HHZ|100.0 st=124 2004-11-12..2005-12-31 lat=-38.2 lon=-72.7

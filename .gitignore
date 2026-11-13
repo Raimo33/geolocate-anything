@@ -7,3 +7,4 @@ reports/
 __pycache__/
 .venv/
 .ccache/
+/field_samples/
