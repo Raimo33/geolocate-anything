@@ -486,3 +486,79 @@ TEST(SeismicNetworks, ShakeSourcesOnlyRefreshedWhenAsked) {
   for (const char* grid : {"china_southern", "china_north_central", "china_east", "china_southwest", "australia_swis", "darwin_katherine"})
     EXPECT_TRUE(refs::refresh_plan(grid).empty()) << grid;
 }
+
+// A mixed network (seismic_ips_shake): direct stations decide where they agree with
+// anyone, a Shake that mirrors one confirms it but is left out, two Shakes agree on
+// their own, and a lone Shake must wander as a grid does.
+TEST(SeismicFuse, MixedNetworkDirectStationsDecide) {
+  const std::size_t n = 3600;
+  std::mt19937 rng(7);
+  std::normal_distribution<double> nd;
+  auto make = [&](double sign, double sigma, float snr, double offset = 0, bool flat = false) {
+    seismic::Track t;
+    t.f_mhz.resize(n), t.snr_db.assign(n, snr);
+    for (std::size_t i = 0; i < n; ++i)
+      t.f_mhz[i] = float(flat ? offset + 0.2 * nd(rng) : sign * dev_mhz(double(i)) + offset + sigma * nd(rng));
+    return t;
+  };
+  auto count = [](const std::vector<float>& v) {
+    int k = 0;
+    for (float x : v) k += std::isfinite(x);
+    return k;
+  };
+  seismic::FuseOptions o;
+  o.lone_max_noise_mhz = 0;  // a direct station never alone
+  o.lone_max_noise_nyquist_mhz = 9, o.lone_min_sd_mhz = 2;
+  const auto direct = make(1, 0.5, 30), shake = make(1, 4, 15), shake2 = make(1, 4, 15), mirror = make(-1, 4, 15), mirror2 = make(-1, 4, 15);
+  {  // a direct station and a Shake that agree: both used
+    o.nyquist = {0, 1};
+    seismic::FuseStats st;
+    auto f = seismic::fuse({direct, shake}, {"d", "s"}, &st, o);
+    EXPECT_GT(count(f), int(n * 0.9));
+    EXPECT_GT(st.used_s[0], i64(n * 0.9));
+    EXPECT_GT(st.used_s[1], i64(n * 0.9));
+  }
+  {  // two Shakes mirroring the direct station: the direct station stands, the Shakes are out
+    o.nyquist = {0, 1, 1};
+    seismic::FuseStats st;
+    auto f = seismic::fuse({direct, mirror, mirror2}, {"d", "m1", "m2"}, &st, o);
+    EXPECT_GT(count(f), int(n * 0.9));
+    EXPECT_EQ(st.used_s[1] + st.used_s[2], 0);
+    double se = 0;
+    int k = 0;
+    for (std::size_t i = 0; i < n; ++i)
+      if (std::isfinite(f[i])) se += std::pow(f[i] - dev_mhz(double(i)), 2), ++k;
+    EXPECT_LT(std::sqrt(se / k), 1.0);
+  }
+  {  // two Shakes that agree, no direct station humming
+    o.nyquist = {1, 1};
+    EXPECT_GT(count(seismic::fuse({shake, shake2}, {"s1", "s2"}, nullptr, o)), int(n * 0.9));
+  }
+  {  // alone: a strong Shake that wanders stands; a flat one (an inverter) or a direct station does not
+    o.nyquist = {1};
+    EXPECT_GT(count(seismic::fuse({shake}, {"s"}, nullptr, o)), int(n * 0.9));
+    EXPECT_EQ(count(seismic::fuse({make(1, 0, 15, 0, true)}, {"flat"}, nullptr, o)), 0);
+    EXPECT_EQ(count(seismic::fuse({make(1, 4, 8)}, {"weak"}, nullptr, o)), 0);  // 8 dB: 16 mHz, too noisy alone
+    o.nyquist = {0};
+    EXPECT_EQ(count(seismic::fuse({direct}, {"d"}, nullptr, o)), 0);
+  }
+}
+
+// IPS/UPS from Shakes: offline only, and stations of grids that left IPS/UPS end with it.
+TEST(SeismicNetworks, IpsShakeIsMixedAndOffline) {
+  const auto& n = seismic::ips_shake();
+  ASSERT_EQ(seismic::network("seismic_ips_shake"), &n);
+  EXPECT_TRUE(n.mixed);
+  EXPECT_FALSE(n.nyquist);
+  EXPECT_EQ(n.mains_hz, 50);
+  int shakes = 0, direct = 0;
+  for (auto& s : n.stations()) {
+    const std::string id = s.id;
+    (id.starts_with("AM.") ? shakes : direct)++;
+    EXPECT_FALSE(s.score.empty()) << id;
+  }
+  EXPECT_EQ(direct, int(seismic::ips().stations().size()));
+  EXPECT_GT(shakes, 0);
+  ::unsetenv("GEOLOC_SHAKE_REFRESH");
+  for (auto& [src, months] : refs::refresh_plan("ips_ups")) EXPECT_NE(src, "seismic_ips_shake");  // not from the dashboard
+}

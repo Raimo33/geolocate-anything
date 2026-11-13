@@ -6,7 +6,8 @@
 // seismic_swis and seismic_darwin Western Australia's SWIS and Darwin-Katherine the same way,
 // seismic_perth_basin the SWIS in 2017 from a 250 samples/s array at AusPass;
 // seismic_brazil is Brazil's SIN (60 Hz) in 2004-02..2008-08, from the University of São Paulo's archive;
-// seismic_estonia is IPS/UPS in 2015-05..2025-02 from the Estonian network at GEOFON (250 samples/s).
+// seismic_estonia is IPS/UPS in 2015-05..2025-02 from the Estonian network at GEOFON (250 samples/s);
+// seismic_ips_shake is IPS/UPS from Raspberry Shakes and seismic_ips's stations together.
 #pragma once
 
 #include <cmath>
@@ -70,11 +71,22 @@ struct Network {
   // the one holding it is listed, and nothing from it on is stored (seismic_estonia: the
   // Baltic states left IPS/UPS on 2025-02-08).
   std::int64_t until = 0;
+  // Both kinds of station in one network (seismic_ips_shake): Raspberry Shakes (network
+  // AM) are fetched from their archive and decoded on Nyquist, the others from EarthScope
+  // and tracked directly, and all are fused together (FuseOptions::nyquist).
+  bool mixed = false;
+  float agree_r_nyquist = 0.7f;       // a pair with a Shake agrees from this r
+  float lone_noise_nyquist_mhz = 0;   // a lone Shake must be this quiet (0: never alone)
+  float lone_min_sd_mhz = 0;          // FuseOptions::lone_min_sd_mhz
 };
 const Network& east();
 const Network& west();
 const Network& ercot();
 const Network& ips();
+// IPS/UPS again, from Raspberry Shakes in Kazakhstan, Russia, Belarus, the Caucasus,
+// Central Asia (and Ukraine, Moldova and the Baltic states while they were part of it)
+// fused with seismic_ips's stations: offline only (GEOLOC_SHAKE_REFRESH).
+const Network& ips_shake();
 // China, from Raspberry Shakes: the Southern grid (Hong Kong, Guangdong), North & Central
 // China, East China and the Southwest.
 const Network& cn_south();

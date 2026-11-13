@@ -12,6 +12,7 @@ the other sections describe what differs for each grid.
 - [ERCOT (`seismic_ercot`)](#ercot-seismic_ercot)
 - [IPS/UPS from Azerbaijan and Central Asia (`seismic_ips`)](#ipsups-from-azerbaijan-and-central-asia-seismic_ips)
 - [IPS/UPS from Estonia (`seismic_estonia`)](#ipsups-from-estonia-seismic_estonia)
+- [IPS/UPS from Raspberry Shakes (`seismic_ips_shake`)](#ipsups-from-raspberry-shakes-seismic_ips_shake)
 - [China (`seismic_cn_*`)](#china-seismic_cn_)
 - [Western Australia and Darwin (`seismic_swis`, `seismic_perth_basin`, `seismic_darwin`)](#western-australia-and-darwin-seismic_swis-seismic_perth_basin-seismic_darwin)
 - [Brazil (`seismic_brazil`)](#brazil-seismic_brazil)
@@ -634,7 +635,9 @@ Continental European references, which are continuous. What stays uncovered:
   ≥ 120 samples/s in Latvia, Lithuania, Belarus, Ukraine, Moldova, Georgia or Armenia. Elering's public API
   has a frequency field, but at 5-minute steps rounded to 10 mHz.
 - Whether the months with a single humming station can be used with a plausibility test
-  on that station (spread and mean of the track) instead of a second site.
+  on that station (spread and mean of the track) instead of a second site. Partly
+  answered by [`seismic_ips_shake`](#ipsups-from-raspberry-shakes-seismic_ips_shake): a
+  Shake is now that second site.
 
 ## IPS/UPS from Estonia (`seismic_estonia`)
 
@@ -755,6 +758,98 @@ refreshes it.
   (Ukraine's `UD` network records at 40 samples/s).
 - Elering's public API (`dashboard.elering.ee/api/system`) has a `frequency` field, but
   only every 5 minutes and rounded to 10 mHz: no use for matching.
+
+## IPS/UPS from Raspberry Shakes (`seismic_ips_shake`)
+
+Code: `src/refs/seismic.cpp` (`track_nyquist`, `fuse` with `FuseOptions::nyquist`),
+`src/refs/seismic_fetch.cpp` (network `ips_shake()`, `Network::mixed`); the screened Shakes
+are in `src/refs/seismic_ips_shake_stations.inc`, followed by `seismic_ips`'s nine stations.
+
+`seismic_ips` and `seismic_estonia` hum only part of the time, and a second is stored only
+where two of their sites agree: on the live dashboard (2026-11-13) IPS/UPS held 52% of
+the seconds from 2015-06 on, with 2023-09..2024-10 at 2–49% a month. Raspberry Shakes are
+far more numerous in the area (245 registered, most in Almaty, Bishkek, Tashkent, Astana,
+Tbilisi, Belarus, Estonia), and their 100 samples/s geophones carry the line on Nyquist,
+which `track_nyquist` decodes as for China. `seismic_ips_shake` fuses the Shakes with
+`seismic_ips`'s strong-motion stations in one network, so that a Shake and a direct
+station confirm each other.
+
+### Fusion of the two kinds
+
+- **Direct stations decide.** Their line has no sign ambiguity. In a 10-minute window where
+  a direct station agrees with anyone, only the direct stations in agreement and the
+  Shakes that agree with one of them (r ≥ 0.7) are used.
+- **Mirrored Shakes.** The Nyquist decoder now and then gets a whole stretch's sign
+  wrong, the same way at every Shake. A Shake that anticorrelates with a direct station
+  (r ≤ −0.7) confirms that station and is itself left out.
+- **Elsewhere** two Shakes more than a kilometre apart that agree are believed, and a lone
+  Shake when its line is 13 dB or more (9 mHz by the fusion's noise law) and its track
+  wanders by at least 2 mHz (standard deviation in the window; an inverter's fixed
+  50 Hz does not). A direct station never stands alone (`AB.SUMQ`'s generator).
+- **Requests**: Shakes by the day from the Raspberry Shake archive (one day probed
+  first; a silent Shake is not asked for the rest), direct stations by 6 h from
+  EarthScope, at most four at once. Every listed station online in the month is used.
+
+### Screening (2026-11-13)
+
+All 245 Raspberry Shakes whose position lies inside IPS/UPS (Ukraine and Moldova until
+2022-02-24, the Baltic states until 2025-02-08), with `seismic_ips`'s nine stations, were
+decoded for 2 h from 02:00 UTC on the 15th of every month, 2018-01..2026-10 (106 windows).
+A Shake is listed if, in at least one window, it agreed (r ≥ 0.7 after 12 s smoothing)
+with a direct station or with another Shake more than a kilometre away: 20 do. Shakes that
+never agreed are left out even when their line was strong (`AM.RFCF5` hummed alone through
+2018-10..2019-01; nothing could confirm it).
+
+Online Shakes are few before 2024: at most four with data in any window of 2018–2023
+(Tashkent's `R39E4`, `RC55B`, `R86F9` from 2021; Estonia's `S7560`, `R7B04`, `S5D35`), 5–10
+from 2024-09 (Almaty, Bishkek, Astana, Tbilisi, Belarus).
+
+### Validation
+
+- *Against the direct stations*, in every window where two direct stations agreed: 144
+  station-windows of the 16 listed Shakes that overlapped them, median r = 0.945 (86% at
+  r ≥ 0.9), median RMS 4.8 mHz, sign wrong in a median 3% of the seconds beyond ±10 mHz.
+  On 2026-02-15 03:00–05:00 UTC seven Shakes (Almaty, Astana, Belarus, Tbilisi) reached
+  r = 0.95–0.98, 3.2–4.5 mHz RMS, against the median of SUMQ, BRZS and CHVK.
+- *Failures seen*: `R6995` mirrored for 20 minutes on 2024-10-15 (+18 against −19 mHz),
+  while `AB.SUMQ` ran on its generator at −220 mHz; BRZS and `R1B7B` agreed, so the fusion
+  kept them and dropped both. Estonian Shakes after 2025-02-08 are uncorrelated with
+  IPS/UPS (r 0.2–0.3), as they must be: their epochs end there.
+
+### Coverage
+
+Fusing the probe windows the way each source would (the project's `fuse`, listed
+stations only), the share of seconds stored:
+
+| Year | `seismic_ips` alone | `seismic_ips_shake` |
+|---|---|---|
+| 2018–2020 | 0% | 0–1% |
+| 2021 | 0% | 10% |
+| 2022 | 14% | 77% |
+| 2023 | 24% | 98% |
+| 2024 | 23% | 96% |
+| 2025 | 89% | 100% |
+| 2026 | 96% | 100% |
+
+The windows are at night (02:00 UTC), when hum is strongest; whole months come out
+lower. `seismic_ips_shake` ranks below `seismic_ips` and `seismic_estonia` (direct lines,
+GPS time) and fills only what they leave.
+
+### Producing the data
+
+Like the other Shake sources: never on the dashboard (`GEOLOC_SHAKE_REFRESH`), backfilled
+offline and pushed. The decoding costs ~25 CPU-minutes per humming Shake and month;
+`GEOLOC_EARTHSCOPE_REFRESH_TOKEN` gives the direct stations the account's quota.
+
+    GEOLOC_SHAKE_REFRESH=1 geoloc refs refresh --grid ips_ups   # every month not stored yet
+    geoloc refs push
+
+### Limits
+
+- *Accuracy*: a Shake is good to about 5 mHz against ~1–2 mHz for a direct line.
+- *Mirrored stretches* where only Shakes hum are not caught (as in China).
+- *Before 2021 nothing is added*: the Shakes then online never agreed with anyone.
+- *Lone Shakes* are believed on their own line; no second site checks them.
 
 ## China (`seismic_cn_*`)
 

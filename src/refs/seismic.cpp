@@ -677,6 +677,15 @@ std::vector<float> fuse(const std::vector<Track>& tracks, const std::vector<std:
   }
   std::vector<std::vector<double>> sm(S);
   for (std::size_t s = 0; s < S; ++s) sm[s] = hann_smooth(v[s], 12);
+  const bool mixed = !o.nyquist.empty();
+  auto nyq = [&](std::size_t s) { return mixed && s < o.nyquist.size() && o.nyquist[s]; };
+  auto sd_of = [](const std::vector<double>& x, std::size_t lo, std::size_t hi) {
+    double s1 = 0, s2 = 0;
+    std::size_t k = 0;
+    for (std::size_t i = lo; i < hi; ++i)
+      if (std::isfinite(x[i])) s1 += x[i], s2 += x[i] * x[i], ++k;
+    return k > 1 ? std::sqrt(std::max(0.0, s2 / double(k) - (s1 / double(k)) * (s1 / double(k)))) : NAN;
+  };
   const std::size_t W = std::size_t(o.window_s), hop = W / 2;
   // Per window (hop W/2, centre half used) the accepted stations and their weights.
   std::vector<std::vector<double>> wt(S, std::vector<double>(n, 0.0));
@@ -693,7 +702,8 @@ std::vector<float> fuse(const std::vector<Track>& tracks, const std::vector<std:
     }
     // agreement graph on the smoothed tracks
     std::vector<int> agree(S, 0);
-    std::vector<char> live(S, 0);
+    std::vector<char> live(S, 0), mirrored(S, 0);
+    std::vector<std::vector<char>> pair_ok(S, std::vector<char>(S, 0));
     for (std::size_t s = 0; s < S; ++s) live[s] = std::isfinite(noise[s]);
     int n_live = 0;
     for (std::size_t s = 0; s < S; ++s) n_live += live[s];
@@ -702,14 +712,41 @@ std::vector<float> fuse(const std::vector<Track>& tracks, const std::vector<std:
         if (!live[a] || !live[b]) continue;
         std::size_t k = 0;
         const double r = pearson(sm[a], sm[b], lo, hi, &k);
-        if (r >= o.agree_r && k >= (hi - lo) / 3) ++agree[a], ++agree[b];
+        if (k < (hi - lo) / 3) continue;
+        const bool na = nyq(a), nb = nyq(b);
+        const double thr = mixed && (na || nb) ? o.agree_r_nyquist : o.agree_r;
+        if (r >= thr) ++agree[a], ++agree[b], pair_ok[a][b] = pair_ok[b][a] = 1;
+        else if (mixed && na != nb && r <= -thr) {  // a Shake mirroring a direct station
+          ++agree[na ? b : a];
+          mirrored[na ? a : b] = 1;
+        }
       }
+    // Where a direct station is confirmed, the direct stations decide.
+    int max_direct = 0;
+    for (std::size_t s = 0; s < S; ++s)
+      if (live[s] && !nyq(s)) max_direct = std::max(max_direct, agree[s]);
+    std::vector<char> anchor(S, 0);
+    if (mixed && max_direct > 0)
+      for (std::size_t s = 0; s < S; ++s) anchor[s] = live[s] && !nyq(s) && agree[s] > 0 && agree[s] * 2 >= max_direct;
     int max_agree = 0;
     for (std::size_t s = 0; s < S; ++s) max_agree = std::max(max_agree, agree[s]);
+    // A lone track: the quietest of those its kind lets stand alone, if it wanders as a grid does.
+    std::size_t lone = S;
+    if (max_agree == 0)
+      for (std::size_t s = 0; s < S; ++s) {
+        if (!live[s] || !(noise[s] <= (nyq(s) ? o.lone_max_noise_nyquist_mhz : o.lone_max_noise_mhz))) continue;
+        if (o.lone_min_sd_mhz > 0 && !(sd_of(sm[s], lo, hi) >= o.lone_min_sd_mhz)) continue;
+        if (lone == S || noise[s] < noise[lone]) lone = s;
+      }
     for (std::size_t s = 0; s < S; ++s) {
       if (!live[s]) continue;
       bool ok;
-      if (max_agree > 0) ok = agree[s] > 0 && agree[s] * 2 >= max_agree;  // in the agreeing group
+      if (max_direct > 0 && mixed) {
+        ok = anchor[s];
+        if (nyq(s) && !mirrored[s])
+          for (std::size_t d = 0; d < S && !ok; ++d) ok = anchor[d] && pair_ok[s][d];
+      } else if (max_agree > 0) ok = agree[s] > 0 && agree[s] * 2 >= max_agree && !mirrored[s];  // in the agreeing group
+      else if (mixed || o.lone_min_sd_mhz > 0) ok = s == lone;
       else ok = noise[s] <= o.lone_max_noise_mhz && (n_live == 1 || noise[s] == *std::min_element(noise.begin(), noise.end(), [](double x, double y) {
                                                                    return !std::isfinite(y) || (std::isfinite(x) && x < y);
                                                                  }));

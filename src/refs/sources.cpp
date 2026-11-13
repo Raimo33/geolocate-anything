@@ -198,6 +198,17 @@ std::vector<Source>& table() {
                   "EarthScope / FDSN open data", true, 1},
                  &net_fetch<&seismic::ips>, &net_months<&seismic::ips>, 1, {}});
     v.back().needs_env = "GEOLOC_EARTHSCOPE_REFRESH_TOKEN";
+    v.push_back({{"seismic_ips_shake", {"ips_ups"},
+                  "Mains hum in Raspberry Shake geophones across IPS/UPS (Kazakhstan, Russia, Belarus, the Caucasus, Central Asia; Ukraine, "
+                  "Moldova and the Baltic states while in it), the 50 Hz line on the Nyquist frequency decoded to a signed deviation, fused "
+                  "with seismic_ips's strong-motion stations, 1 s, 2018 on; fills what seismic_ips and seismic_estonia leave "
+                  "(~0.3-0.55 GB per Shake and month)",
+                  "Raspberry Shake network AM and EarthScope / FDSN, open data", true, 1},
+                 &net_fetch<&seismic::ips_shake>, &net_months<&seismic::ips_shake>, 1, {}});
+    // Decoding costs ~25 CPU-minutes per humming Shake and month: backfilled offline and
+    // pushed, never refreshed by the dashboard (as seismic_cn_*). The EarthScope stations
+    // in it use GEOLOC_EARTHSCOPE_REFRESH_TOKEN when set.
+    v.back().needs_env = "GEOLOC_SHAKE_REFRESH";
     v.push_back({{"seismic_cn_south", {"china_southern"},
                   "Mains hum in Raspberry Shake geophones in Hong Kong and Guangdong (China Southern Power Grid), 1 s, 2019-07 on: the 50 Hz "
                   "line on the Nyquist frequency decoded to a signed deviation, stations fused by agreement (~0.3-0.55 GB per station and month)",

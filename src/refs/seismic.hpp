@@ -83,6 +83,17 @@ struct FuseOptions {
   double agree_r = 0.9;
   double lone_max_noise_mhz = 1.5;  // a station with nobody to check it must be this quiet (0: never alone)
   double max_abs_mhz = 400;         // beyond this a value is not grid frequency
+  // Mixed networks (seismic_ips_shake): which tracks come from track_nyquist (empty:
+  // none, or all when the network is a Shake network and says so through agree_r). A
+  // direct line has no sign ambiguity, so where a direct station agrees with anyone, the
+  // direct stations decide the window: a Nyquist track is accepted only if it agrees
+  // with one of them, and one that mirrors a direct station (r <= -agree_r_nyquist: the
+  // decoder chose the wrong sign for the stretch, the same way at every Shake) confirms
+  // the direct station but is itself left out.
+  std::vector<char> nyquist;
+  double agree_r_nyquist = 0.7;      // a pair with a Nyquist track agrees from this r
+  double lone_max_noise_nyquist_mhz = 0;  // a lone Nyquist track must be this quiet (0: never alone)
+  double lone_min_sd_mhz = 0;        // and a lone track of either kind must wander this much in the window (an inverter's fixed 50 Hz does not)
 };
 
 struct FuseStats {

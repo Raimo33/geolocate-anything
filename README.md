@@ -101,6 +101,7 @@ All series are stored at 1 s resolution, rounded to 1 mHz.
 | Japan East (50 Hz) | `dtu_tokyo` | 42 days of 2017, 317 of 2020 | DTU recorder in Tokyo, 0.5 s (CC BY-NC-ND). | — |
 | IPS/UPS (Russia & neighbours) | `seismic_ips` | 2022-10 → today (gaps) | Reconstructed from the 50 Hz hum in GPS-timed strong-motion stations in Azerbaijan, Kazakhstan and Kyrgyzstan; only seconds on which two sites agree. See [below](#ipsups-grid-frequency-from-seismometer-hum). | Stations hum only part of the time: 98% of 2025-04 is stored, 74% of 2023-01, 6–15% of the months of 2023-03..2024-10 tried. Sites can differ by up to ~2 s. |
 | IPS/UPS (Russia & neighbours) | `seismic_estonia` | 2015-05 → 2025-02-08 (gaps) | Reconstructed from the 50 Hz hum in the Estonian national seismic network (250 samples/s, GPS-timed) while the Baltic states were part of IPS/UPS; only seconds on which two sites agree. See [`docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia`](docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia). | Sites hum by spells, mostly at night: 4–25% of the seconds of the months checked. ~1 s ahead of KIT's recorders (r 0.95–0.996, 2.7 mHz RMS against Kaunas/Tallinn 2025). |
+| IPS/UPS (Russia & neighbours) | `seismic_ips_shake` | 2021 → today (gaps) | Raspberry Shakes in Kazakhstan, Kyrgyzstan, Uzbekistan, Georgia, Belarus and Estonia (until 2025-02-08), the 50 Hz line on Nyquist decoded as for China, fused with `seismic_ips`'s stations, which decide where they hum. Fills what `seismic_ips` and `seismic_estonia` leave. See [`docs/grids/seismic.md#ipsups-from-raspberry-shakes-seismic_ips_shake`](docs/grids/seismic.md#ipsups-from-raspberry-shakes-seismic_ips_shake). | Shakes good to ~5 mHz (r 0.945 median against the direct stations). In night probes 2023–2024 go from ~24% of seconds to 96–98%; nothing added before 2021. Backfilled offline. |
 | IPS/UPS (Russia & neighbours) | `osf_edr` | 2019-03-29 → 2019-04-17, 2019-04-30 → 05-11 | KIT recorders in Tallinn and St. Petersburg, 1 s. | Tallinn's clock ran 19–55 s late, growing by 1–2 s a day: corrected against `seismic_estonia`, its first four days dropped. |
 | China Southern (with Hong Kong, Macau) | `seismic_cn_south` | 2019-07 → 2025-12 (gaps; 326 days in all) | Reconstructed from the 50 Hz hum in Raspberry Shake geophones in Hong Kong and Guangdong. The line sits on the Nyquist frequency of their 100 samples/s; a decoder recovers the signed deviation. See [below](#chinas-grid-frequencies-from-raspberry-shake-hum). | 4–7 mHz per station, against 1 mHz for a direct line. Stations hum by spells. |
 | China North & Central | `seismic_cn_north` | 2019-08 → 2020-03, 2022-09 → 2024-09 (483 days) | Same method: Beijing, Tianjin, Ordos. | As above; often one station alone. |
@@ -147,7 +148,9 @@ the same with the Estonian national network's 250 samples/s stations at GEOFON
 ([`docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia`](docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia)); they also showed
 that KIT's 2019 Tallinn recorder ran up to 55 s late, now corrected. Nothing usable was
 found before 2015. Ukraine is part of Continental Europe since 2022-03-16 and is
-matched there. Screening, coverage and what was ruled out:
+matched there. `seismic_ips_shake` adds 20 Raspberry Shakes (Almaty, Bishkek, Tashkent,
+Astana, Tbilisi, Belarus, Estonia) decoded on Nyquist as for China and fused with the
+strong-motion stations, which fills most of 2022-04..2024-10, the thinnest stretch. Screening, coverage and what was ruled out:
 [`docs/grids/seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips`](docs/grids/seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips).
 
 ### China's grid frequencies from Raspberry Shake hum
@@ -312,7 +315,7 @@ import; `GEOLOC_EARTHSCOPE_REFRESH_TOKEN` enables the EarthScope seismic refresh
 `seismic_ips`; the anonymous EarthScope quota cannot backfill); `GEOLOC_US_SEISMIC_REFRESH`
 (with the token) enables `seismic_west` and `seismic_ercot`, ~1.3 TB of download to
 backfill, so they are fetched offline and pushed, never refreshed by the dashboard; `GEOLOC_SHAKE_REFRESH` enables the Raspberry Shake
-sources (`seismic_cn_*`, `seismic_swis`, `seismic_darwin`), whose decoding costs ~25 CPU-minutes per station and month: they
+sources (`seismic_cn_*`, `seismic_swis`, `seismic_darwin`, `seismic_ips_shake`), whose decoding costs ~25 CPU-minutes per station and month: they
 are backfilled on a separate machine and pushed (`refs push`), never refreshed by the
 dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_GEOFON_REFRESH` enables `seismic_estonia` (a closed period, ~4 GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
 2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);

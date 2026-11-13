@@ -46,7 +46,9 @@ int source_rank(std::string_view s) {
       {"neso", 0},     {"fingrid", 0},     {"aemo_fpp", 0},     {"aemo_causer_pays", 0}, {"aemo_annual", 2}, {"energy_charts", 5},
       {"netztransparenz", 8}, {"osf_pgf", 10}, {"seismic_east", 15}, {"osf_ireland", 10}, {"osf_edr", 20},
       {"seismic_ips", 60}, {"seismic_cn_south", 60}, {"seismic_cn_north", 60}, {"seismic_cn_east", 60}, {"seismic_cn_southwest", 60},
-      {"seismic_brazil", 60}, {"seismic_swis", 60}, {"seismic_darwin", 60}, {"seismic_perth_basin", 60}, {"seismic_estonia", 60}, {"seismic_west", 60}, {"seismic_ercot", 60}, {"local", 100}};  // these seismic sources: after the measured recorders (unlisted sources rank 50)
+      {"seismic_brazil", 60}, {"seismic_swis", 60}, {"seismic_darwin", 60}, {"seismic_perth_basin", 60}, {"seismic_estonia", 60}, {"seismic_west", 60}, {"seismic_ercot", 60},
+      {"seismic_ips_shake", 61}, {"local", 100}};  // these seismic sources: after the measured recorders (unlisted sources rank 50);
+  // seismic_ips_shake fills what seismic_ips and seismic_estonia (direct lines, GPS) leave
   auto it = rank.find(s);
   return it == rank.end() ? 50 : it->second;
 }

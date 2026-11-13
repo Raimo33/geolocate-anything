@@ -35,6 +35,7 @@ constexpr i64 SHAKE_CHUNK_S = 24 * 3600;
 constexpr int SHAKE_IN_FLIGHT = 10;  // Raspberry Shake requests in flight (see fetch_month)
 constexpr i64 PROBE_S = 24 * 3600;  // Raspberry Shake: one chunk a day first (see fetch_month)
 constexpr i64 PAD_S = 10;          // frame half-length + filter, either side
+constexpr int ES_IN_FLIGHT = 4;    // EarthScope requests in flight in a mixed network (it allows 5)
 
 namespace east_table {
 #include "refs/seismic_stations.inc"
@@ -75,6 +76,9 @@ namespace brazil_table {
 namespace estonia_table {
 #include "refs/seismic_estonia_stations.inc"
 }
+namespace ips_shake_table {
+#include "refs/seismic_ips_shake_stations.inc"
+}
 const std::vector<Station>& cn_south_list() { return cn_south_table::STATIONS; }
 const std::vector<Station>& cn_north_list() { return cn_north_table::STATIONS; }
 const std::vector<Station>& cn_east_list() { return cn_east_table::STATIONS; }
@@ -88,6 +92,15 @@ const std::vector<Station>& ercot_list() { return ercot_table::STATIONS; }
 const std::vector<Station>& ips_list() { return ips_table::STATIONS; }
 const std::vector<Station>& brazil_list() { return brazil_table::STATIONS; }
 const std::vector<Station>& estonia_list() { return estonia_table::STATIONS; }
+// seismic_ips's stations and the screened Shakes.
+const std::vector<Station>& ips_shake_list() {
+  static const std::vector<Station> all = [] {
+    std::vector<Station> v = ips_table::STATIONS;
+    v.insert(v.end(), ips_shake_table::STATIONS.begin(), ips_shake_table::STATIONS.end());
+    return v;
+  }();
+  return all;
+}
 
 std::string iso(double t) {
   const i64 s = i64(std::floor(t));
@@ -395,8 +408,26 @@ const Network& estonia() {
   }();
   return n;
 }
+// IPS/UPS from Raspberry Shakes, fused with seismic_ips's direct stations
+// (docs/grids/seismic.md#ipsups-from-raspberry-shakes-seismic_ips_shake). Every screened
+// station online in the month is fetched: Shakes cost little when silent (one day probed,
+// blocks without a line not decoded). Direct stations decide where they agree with
+// anyone; elsewhere two Shakes that agree, or one Shake alone with a 13 dB line (9 mHz by
+// the fusion's noise law) that wanders as the grid does, are believed. A direct station
+// never stands alone (seismic_ips: one runs on a generator at times).
+const Network& ips_shake() {
+  static const Network n = [] {
+    Network n{"seismic_ips_shake", 50, "", 0.0f, 400, 400, false, &ips_shake_list};
+    n.mixed = true;
+    n.archive = "Raspberry Shake and EarthScope";
+    n.agree_r_nyquist = 0.7f, n.lone_noise_nyquist_mhz = 9.0f, n.lone_min_sd_mhz = 2.0f;
+    n.same_site_km = 1.0f;
+    return n;
+  }();
+  return n;
+}
 const Network* network(std::string_view source) {
-  for (const Network* n : {&east(), &west(), &ercot(), &ips(), &cn_south(), &cn_north(), &cn_east(), &cn_southwest(), &swis(), &darwin(), &perth_basin(), &brazil(), &estonia()})
+  for (const Network* n : {&east(), &west(), &ercot(), &ips(), &cn_south(), &cn_north(), &cn_east(), &cn_southwest(), &swis(), &darwin(), &perth_basin(), &brazil(), &estonia(), &ips_shake()})
     if (source == n->source) return n;
   return nullptr;
 }
@@ -427,8 +458,12 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   // in flight (still starting at most one a second, shake_pace) while only `decode_slots`
   // chunks decode at once (GEOLOC_THREADS, default: all cores, 4 to 8). A chunk waiting to
   // decode holds its download, a few MB.
-  int parallel = 4, decode_slots = 1 << 30, decoding = 0;
-  if (net.nyquist) {
+  // A mixed network (seismic_ips_shake) holds both: its Raspberry Shakes (network AM)
+  // are fetched and decoded as a Shake network's, the rest as EarthScope's, at most
+  // ES_IN_FLIGHT of those at once.
+  const bool any_shake = net.nyquist || net.mixed;
+  int parallel = 4, decode_slots = 1 << 30, decoding = 0, es_in_flight = 0;
+  if (any_shake) {
     const std::string t = env("GEOLOC_THREADS");
     decode_slots = !t.empty() ? std::clamp(std::atoi(t.c_str()), 1, 32) : std::clamp(int(std::thread::hardware_concurrency()), 4, 8);
     parallel = std::max(decode_slots, SHAKE_IN_FLIGHT);
@@ -436,8 +471,7 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   const int base_stations = net.base_stations, max_stations = net.max_stations;
   const std::string name = net.source;
   const bool nyquist = net.nyquist;
-  const i64 chunk_s = nyquist ? SHAKE_CHUNK_S : CHUNK_S;
-  const int probe_every = int(std::max<i64>(1, PROBE_S / chunk_s));
+  const int probe_every = int(std::max<i64>(1, PROBE_S / SHAKE_CHUNK_S));
   TrackOptions topt;
   topt.nominal_hz = topt.mains_hz = net.mains_hz;
   topt.robust_floor = net.robust_floor;
@@ -447,8 +481,6 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   fopt.agree_r = net.agree_r;
   fopt.lone_max_noise_mhz = net.lone && (!net.lone_before || month < net.lone_before) ? net.lone_noise_mhz : 0;
   const std::string dataselect = net.dataselect ? net.dataselect : net.nyquist ? SHAKE_DATASELECT : DATASELECT;
-  const bool earthscope = dataselect == DATASELECT;  // the account's token goes there only
-  const i64 pad = net.nyquist ? NYQUIST_PAD_S + 5 : PAD_S;
   auto [t0, t1] = month_bounds(month);
   const i64 now = i64(now_seconds());
   if (t0 > now) throw NoData(month + " is in the future");
@@ -478,6 +510,17 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
     if (int(pick.size()) >= max_stations) break;
   }
   if (pick.empty()) throw NoData("no screened station covers " + month);
+  // Per station: decoder, archive, request length and padding.
+  std::vector<char> shake_of(pick.size());
+  for (std::size_t k = 0; k < pick.size(); ++k) shake_of[k] = nyquist || (net.mixed && std::string_view(pick[k]->id).starts_with("AM."));
+  auto url_of = [&](std::size_t k) -> std::string { return net.mixed ? (shake_of[k] ? SHAKE_DATASELECT : DATASELECT) : dataselect; };
+  auto pad_of = [&](std::size_t k) { return shake_of[k] ? NYQUIST_PAD_S + 5 : PAD_S; };
+  if (net.mixed) {
+    fopt.nyquist = shake_of;
+    fopt.agree_r_nyquist = net.agree_r_nyquist;
+    fopt.lone_max_noise_nyquist_mhz = net.lone_noise_nyquist_mhz;
+    fopt.lone_min_sd_mhz = net.lone_min_sd_mhz;
+  }
 
   const std::size_t n = std::size_t(t1 - t0);
   std::vector<Track> tracks(pick.size());
@@ -488,23 +531,40 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   };
   int failed = 0, empty = 0, n_jobs = 0;
   std::set<i64> failed_chunks;  // chunk starts where a download or decode failed
+  // In a mixed network a failure is kept as its whole day, so that a refetch asks every
+  // station for it (Shakes by the day, the others by 6 h).
+  auto failed_at = [&](i64 a) { failed_chunks.insert(net.mixed ? t0 + (a - t0) / SHAKE_CHUNK_S * SHAKE_CHUNK_S : a); };
   std::string last_err;
   std::map<std::string, i64> bytes;
   std::map<std::size_t, int> failed_by;  // per station
   auto run = [&](std::vector<Job> jobs) -> asio::awaitable<void> {
     n_jobs += int(jobs.size());
     co_await net::parallel_for(std::move(jobs), parallel, [&](Job j) -> asio::awaitable<void> {
-      if (nyquist) co_await shake_pace();
+      const bool shake = shake_of[j.st];
+      const std::string base_url = url_of(j.st);
+      const bool earthscope = base_url == DATASELECT;  // the account's token goes there only
+      const i64 pad = pad_of(j.st);
+      if (shake) co_await shake_pace();
+      else if (any_shake) {  // EarthScope allows 5 connections
+        while (es_in_flight >= ES_IN_FLIGHT) co_await net::sleep_for(0.05);
+      }
+      struct Slot {  // an EarthScope connection, held to the end of the request
+        int* n;
+        ~Slot() {
+          if (n) --*n;
+        }
+      } slot{shake ? nullptr : &es_in_flight};
+      if (!shake) ++es_in_flight;
       const std::string id = pick[j.st]->id;
       const auto p1 = id.find('.'), p2 = id.find('.', p1 + 1), p3 = id.find('.', p2 + 1);
       const std::string net = id.substr(0, p1), sta = id.substr(p1 + 1, p2 - p1 - 1), loc = id.substr(p2 + 1, p3 - p2 - 1), cha = id.substr(p3 + 1);
-      const std::string url = dataselect + "?net=" + net + "&sta=" + sta + "&loc=" + (loc.empty() ? "--" : loc) + "&cha=" + cha +
+      const std::string url = base_url + "?net=" + net + "&sta=" + sta + "&loc=" + (loc.empty() ? "--" : loc) + "&cha=" + cha +
                               "&start=" + iso(double(j.a - pad)) + "&end=" + iso(double(j.b + pad));
       net::Response r;
       try {
         r = co_await get_patiently(http, url, earthscope);
       } catch (const std::exception& e) {
-        ++failed, ++failed_by[j.st], last_err = e.what(), failed_chunks.insert(j.a);
+        ++failed, ++failed_by[j.st], last_err = e.what(), failed_at(j.a);
         co_return;
       }
       if (r.status == 204 || r.body.empty()) {
@@ -530,7 +590,7 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
           return std::nullopt;
         }
         std::string().swap(body);
-        return nyquist ? track_nyquist(segs, j.a, j.b, nopt) : track_hum(segs, j.a, j.b, topt);
+        return shake ? track_nyquist(segs, j.a, j.b, nopt) : track_hum(segs, j.a, j.b, topt);
       };
       while (decoding >= decode_slots) co_await net::sleep_for(0.05);  // one event loop: no race
       ++decoding;
@@ -542,7 +602,7 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
       }
       --decoding;
       if (!tracked) {
-        ++failed, ++failed_by[j.st], last_err = std::string("decode ") + id + ": " + decode_err, failed_chunks.insert(j.a);
+        ++failed, ++failed_by[j.st], last_err = std::string("decode ") + id + ": " + decode_err, failed_at(j.a);
         co_return;
       }
       const Track& tr = *tracked;
@@ -556,13 +616,13 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   // failed download) is not asked for the rest. A station online only between the
   // probed hours of every day is missed; anything longer is not.
   auto run_probed = [&](std::vector<Job> jobs) -> asio::awaitable<void> {
-    if (!nyquist) {
+    if (!any_shake) {
       co_await run(std::move(jobs));
       co_return;
     }
     std::map<std::size_t, int> seen;
     std::vector<Job> probe, rest;
-    for (auto& j : jobs) (seen[j.st]++ % probe_every == 0 ? probe : rest).push_back(j);
+    for (auto& j : jobs) (!shake_of[j.st] || seen[j.st]++ % probe_every == 0 ? probe : rest).push_back(j);
     co_await run(std::move(probe));
     std::erase_if(rest, [&](const Job& j) { return bytes[pick[j.st]->id] == 0 && !failed_by[j.st]; });
     co_await run(std::move(rest));
@@ -570,17 +630,25 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   std::vector<std::string> ids;
   for (auto* s : pick) ids.push_back(s->id);
   const std::size_t base = std::min<std::size_t>(std::size_t(base_stations), pick.size());
-  std::vector<std::pair<i64, i64>> chunks;  // the ones to fetch
+  // The chunks to fetch: a day per request for Shakes, 6 h for the others.
   int skipped = 0;
-  for (i64 a = t0; a < end; a += chunk_s) {
-    const i64 b = std::min(a + chunk_s, end);
-    if (skip && skip(a, b)) ++skipped;
-    else chunks.push_back({a, b});
-  }
+  auto chunks_of_len = [&](i64 chunk_s) {
+    std::vector<std::pair<i64, i64>> c;
+    for (i64 a = t0; a < end; a += chunk_s) {
+      const i64 b = std::min(a + chunk_s, end);
+      if (skip && skip(a, b)) ++skipped;
+      else c.push_back({a, b});
+    }
+    return c;
+  };
+  const std::vector<std::pair<i64, i64>> shake_chunks = any_shake ? chunks_of_len(SHAKE_CHUNK_S) : std::vector<std::pair<i64, i64>>{},
+                                         es_chunks = nyquist ? std::vector<std::pair<i64, i64>>{} : chunks_of_len(CHUNK_S);
+  auto chunks_of = [&](std::size_t k) -> const std::vector<std::pair<i64, i64>>& { return shake_of[k] ? shake_chunks : es_chunks; };
+  const bool no_chunks = shake_chunks.empty() && es_chunks.empty();
   {
     std::vector<Job> jobs;
     for (std::size_t k = 0; k < base; ++k)
-      for (auto [a, b] : chunks) jobs.push_back({k, a, b});
+      for (auto [a, b] : chunks_of(k)) jobs.push_back({k, a, b});
     co_await run_probed(std::move(jobs));
   }
   // Reserves, chunk by chunk, where fewer than `base` stations backed the fused value for
@@ -590,7 +658,7 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
   for (std::size_t k = base; k < pick.size(); ++k) {
     fuse(tracks, ids, &st, fopt);
     std::vector<Job> jobs;
-    for (auto [a, b] : chunks) {
+    for (auto [a, b] : chunks_of(k)) {
       i64 short_s = 0;
       for (i64 t = a; t < b; ++t) short_s += st.n_used[std::size_t(t - t0)] < base;
       if (short_s * 10 > b - a) jobs.push_back({k, a, b});
@@ -617,7 +685,7 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
               << " chunk(s), kept for the next fetch (" << last_err << ")" << std::endl;
   // A month fetched again for a few chunks (`skipped` > 0: the rest is stored) keeps what
   // it has when those chunks add nothing; only a month with nothing at all has no data.
-  if (!fin && !chunks.empty() && !skipped)
+  if (!fin && !no_chunks && !skipped)
     throw NoData("no station's hum passed the checks in " + month + " (" + std::to_string(empty) + " empty chunk(s))");
   json::array used;
   for (std::size_t k = 0; k < pick.size(); ++k) {
@@ -633,16 +701,22 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
     used.push_back(std::move(o));
   }
   out.meta = {{"source", name},
-              {"url", dataselect},
+              {"url", net.mixed ? std::string(SHAKE_DATASELECT) + " " + DATASELECT : dataselect},
               {"licence", net.licence  ? net.licence
+                          : net.mixed ? "Raspberry Shake citizen-science network AM (doi:10.7914/SN/AM), open data; EarthScope / FDSN open data "
+                                        "(networks AB, KR, QZ; see docs/grids/datasets.md)"
                           : nyquist ? "Raspberry Shake citizen-science network AM (doi:10.7914/SN/AM), open data"
                                     : "EarthScope / FDSN open data (cite each network's DOI; see docs/grids/datasets.md)"},
               {"native_resolution_s", 1.0},
-              {"method", nyquist ? "50 Hz mains hum on the Nyquist frequency of 100 samples/s geophones: the real beat is decoded to a signed "
+              {"method", net.mixed ? "50 Hz mains hum: on the Nyquist frequency of Raspberry Shake geophones (100 samples/s), decoded to a "
+                                     "signed deviation by a forward-backward pass, and read directly in 200 samples/s GPS-timed strong-motion "
+                                     "recordings (12 s Hann frames); fused by agreement, the direct stations deciding where they agree"
+                         : nyquist ? "50 Hz mains hum on the Nyquist frequency of 100 samples/s geophones: the real beat is decoded to a signed "
                                    "deviation by a forward-backward pass (the digitiser's roll-off gives the sign), stations fused by agreement"
                                  : std::to_string(int(net.mains_hz)) + " Hz mains hum in " + (net.timestamps ? "" : "GPS-timed ") +
                                        "accelerometer/seismometer recordings: 12 s Hann frames each second, stations fused by agreement and SNR"},
               {"timestamps", net.timestamps ? net.timestamps
+                             : net.mixed ? "UTC: Shakes by NTP (tens of milliseconds), strong-motion stations by GPS"
                              : nyquist ? "UTC from the stations' NTP-disciplined clocks (tens of milliseconds)"
                                      : "UTC from the digitisers' GPS clocks; each value is the 12 s frame centred on the middle of its second"},
               {"files", used},  // per month in the manifest: the placement audit reads it
