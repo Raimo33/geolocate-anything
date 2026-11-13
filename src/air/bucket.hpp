@@ -1,6 +1,6 @@
 // The ADS-B store's own bucket (e.g. a Railway bucket of its own, apart from the
 // reference store's). Days are built once (`aircraft fetch DAY --push`, ~4 GB read from
-// ADSB.lol, ~100 MB kept) and kept there; a server's volume holds only the days its
+// ADSB.lol, ~50 MB kept) and kept there; a server's volume holds only the days its
 // analyses used last (GEOLOC_AIRPLANE_KEEP_DAYS), each streamed from the bucket on first use,
 // plus every day's small coverage sidecar for the history map.
 //

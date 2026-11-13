@@ -183,15 +183,43 @@ TEST(AircraftEvents, DetectsAndMeasuresASyntheticFlyover) {
 }
 
 TEST(AircraftStore, EncodeDecodeRoundTrip) {
+  // A PC-12 at 70 m/s: 200 s straight, a 3 deg/s turn through 180 deg, 200 s straight
+  // climbing 3 m/s; a new leg after a 300 s gap. Fixes every 2 s with 3 m of jitter
+  // and 0.5 m/s on the reported velocity, some velocities missing.
   Track a;
   a.icao = 0xa1dfeb, a.type = "PC12", a.reg = "N22NY";
   a.info = {'L', 1, EngineType::Turboprop};
-  for (int i = 0; i < 50; ++i) {
+  const double t0 = 1788898649.25, v = 70, w = 3 * DEG, lat0 = 40.8, lon0 = -73.5;
+  const Enu enu(lat0, lon0);
+  struct Truth {
+    Vec3 p, v;  // ENU
+  };
+  auto truth = [&](double t) {
+    if (t <= 200) return Truth{{0, v * t, 1500}, {0, v, 0}};
+    const double tt = 60.0, r = v / w;  // turn: 60 s, centred east of the end of leg 1
+    if (t <= 200 + tt) {
+      const double th = w * (t - 200);
+      return Truth{{r - r * std::cos(th), v * 200 + r * std::sin(th), 1500}, {v * std::sin(th), v * std::cos(th), 0}};
+    }
+    const double s = t - 200 - tt;
+    return Truth{{2 * r, v * 200 - v * s, 1500 + 3 * s}, {0, -v, 3}};
+  };
+  std::mt19937 rng(7);
+  std::normal_distribution<double> n3(0, 3), nv(0, 0.5);
+  std::vector<double> times;
+  for (double t = 0; t <= 460; t += 2) times.push_back(t);
+  for (double t = 760; t <= 860; t += 2) times.push_back(t);
+  for (double t : times) {
+    const double tt = t >= 760 ? t - 760 + 460 : t;  // the second leg flies on
+    const Truth tr = truth(tt);
+    const Geodetic g = geodetic(enu.o + enu.unrot(tr.p + Vec3{n3(rng), n3(rng), n3(rng)}));
     Fix f;
-    f.t = 1788898649.25 + i * 4.5, f.lat = 40.8 + i * 1e-3, f.lon = -73.5 - i * 2e-3;
-    f.alt_m = 1500.5f + float(i), f.gs = 130, f.track = i == 7 ? NAN : 355.0f + float(i) * 0.5f, f.vrate = i == 3 ? NAN : -1.5f;
-    f.alt_src = i % 2 ? AltSource::BaroTrack : AltSource::Geometric;
-    f.leg_start = i == 10;
+    f.t = t0 + t, f.lat = g.lat, f.lon = g.lon, f.alt_m = float(g.h);
+    const double ve = tr.v.x + nv(rng), vn = tr.v.y + nv(rng);
+    f.gs = float(std::hypot(ve, vn)), f.track = float(std::fmod(std::atan2(ve, vn) / DEG + 360, 360)), f.vrate = float(tr.v.z + nv(rng));
+    if (int(t) % 34 == 0) f.gs = f.track = NAN;
+    f.alt_src = AltSource::BaroTrack;
+    f.leg_start = t == 760;
     a.fixes.push_back(f);
   }
   auto back = decode_tracks(encode_tracks({a}));
@@ -200,24 +228,36 @@ TEST(AircraftStore, EncodeDecodeRoundTrip) {
   EXPECT_EQ(back[0].type, "PC12");
   EXPECT_EQ(back[0].reg, "N22NY");
   EXPECT_EQ(back[0].info.engine, EngineType::Turboprop);
-  ASSERT_EQ(back[0].fixes.size(), 50u);
-  for (std::size_t i = 0; i < 50; ++i) {
-    // Stored at 0.1 s, 1e-5 deg, 1 m, 0.1 kt, 0.1 deg, 1 ft/min.
-    EXPECT_NEAR(back[0].fixes[i].t, a.fixes[i].t, 0.05);
-    EXPECT_NEAR(back[0].fixes[i].lat, a.fixes[i].lat, 5e-6);
-    EXPECT_NEAR(back[0].fixes[i].lon, a.fixes[i].lon, 5e-6);
-    EXPECT_NEAR(back[0].fixes[i].alt_m, a.fixes[i].alt_m, 0.5);
-    EXPECT_NEAR(back[0].fixes[i].gs, a.fixes[i].gs, 0.03);
-    if (std::isnan(a.fixes[i].track)) EXPECT_TRUE(std::isnan(back[0].fixes[i].track));
-    else EXPECT_NEAR(std::remainder(back[0].fixes[i].track - a.fixes[i].track, 360.0), 0.0, 0.05);
-    if (std::isnan(a.fixes[i].vrate)) EXPECT_TRUE(std::isnan(back[0].fixes[i].vrate));
-    else EXPECT_NEAR(back[0].fixes[i].vrate, a.fixes[i].vrate, 0.003);
-    EXPECT_EQ(back[0].fixes[i].alt_src, a.fixes[i].alt_src);
-    EXPECT_EQ(back[0].fixes[i].leg_start, a.fixes[i].leg_start);
-  }
-  // Leg starts and gaps split a track into segments.
+  // A few nodes, not 283 fixes: the straight legs need hardly any.
+  EXPECT_LT(back[0].fixes.size(), 40u);
+  EXPECT_GE(back[0].fixes.size(), 6u);
+  for (auto& f : back[0].fixes) EXPECT_EQ(f.alt_src, AltSource::BaroTrack);
+  EXPECT_NEAR(back[0].fixes.front().t, t0, 0.5);
+  EXPECT_NEAR(back[0].fixes.back().t, t0 + 860, 0.5);
+  // Leg starts and gaps split a track into segments; the curve follows the true
+  // trajectory (better than the jittered fixes did).
   auto segs = split_tracks(back, 120.0);
-  EXPECT_EQ(segs.size(), 2u);
+  ASSERT_EQ(segs.size(), 2u);
+  EXPECT_TRUE(segs[1].fixes.front().leg_start);
+  double worst_p = 0, worst_v = 0;
+  std::vector<double> ev;
+  for (auto& sg : segs) {
+    const Path path = path_of(sg);
+    for (double t = path.t0(); t <= path.t1(); t += 1) {
+      const double tt = t - t0 >= 760 ? t - t0 - 760 + 460 : t - t0;
+      if (tt > 458 && tt < 460) continue;  // the last fix of leg 1 is at 460: no extrapolation
+      Vec3 p, vel;
+      path.state(t, p, vel);
+      const Truth tr = truth(tt);
+      worst_p = std::max(worst_p, (enu.pos(p) - tr.p).norm());
+      worst_v = std::max(worst_v, (enu.rot(vel) - tr.v).norm());
+      ev.push_back((enu.rot(vel) - tr.v).norm());
+    }
+  }
+  std::sort(ev.begin(), ev.end());
+  EXPECT_LT(worst_p, 25.0);
+  EXPECT_LT(ev[ev.size() / 2], 0.7);
+  EXPECT_LT(worst_v, 8.0);  // at the turn's instant roll-in and roll-out (no aircraft does that)
 }
 
 TEST(AircraftStore, IngestsADayFromLocalTarParts) {
@@ -228,10 +268,10 @@ TEST(AircraftStore, IngestsADayFromLocalTarParts) {
     return R"({"icao":")" + icao + R"(",)" + (t.empty() ? "" : R"("t":")" + t + R"(",)") + R"("r":"N1","timestamp": 1767225600.000,"trace":[)" + pts + "]}";
   };
   const std::string c172 = trace("a00001", "C172",
-                                 R"([0.5,40.0,-100.0,3000,100.0,90.0,0,0,null,"adsb_icao",3100,null,null,null],)"
-                                 R"([10.5,40.0,-99.99,3000,100.0,90.0,0,0,null,"adsb_icao",3100,null,null,null],)"
-                                 R"([20.5,40.0,-99.98,3000,100.0,90.0,0,0,null,"adsb_icao",null,null,null,null],)"
-                                 R"([30.5,40.0,-99.97,3000,100.0,90.0,0,0,null,"adsb_icao",3100,null,null,null])");
+                                 R"([0.5,40.0,-100.0,3000,165.8,90.0,0,0,null,"adsb_icao",3100,null,null,null],)"
+                                 R"([10.5,40.0,-99.99,3000,165.8,90.0,0,0,null,"adsb_icao",3100,null,null,null],)"
+                                 R"([20.5,40.0,-99.98,3000,165.8,90.0,0,0,null,"adsb_icao",null,null,null,null],)"
+                                 R"([30.5,40.0,-99.97,3000,165.8,90.0,0,0,null,"adsb_icao",3100,null,null,null])");
   const std::string jet = trace("a00002", "", R"([0.5,41.0,-100.0,30000,400.0,90.0,0,0,null,"adsb_icao",30500,null,null,null])");
   const std::string gnd = trace("a00009", "C172", R"([0.5,41.0,-100.0,"ground",5.0,90.0,0,null,null,"adsb_icao",null,null,null,null])");
   std::string tar;
@@ -268,10 +308,16 @@ TEST(AircraftStore, IngestsADayFromLocalTarParts) {
   auto tr = load_tracks(1767225600.0, 1767225700.0);
   ASSERT_EQ(tr.size(), 1u);
   EXPECT_EQ(tr[0].type, "C172");
-  ASSERT_EQ(tr[0].fixes.size(), 4u);
-  EXPECT_NEAR(tr[0].fixes[0].alt_m, 3100 * FT, 0.5);  // stored to the metre
-  EXPECT_NEAR(tr[0].fixes[2].alt_m, 3100 * FT, 0.5);  // 3000 ft baro + 100 ft offset
-  EXPECT_NEAR(tr[0].fixes[0].gs, 100 * KT, 1e-3);
+  // A straight, level, steady flight: its two ends are all the store keeps.
+  ASSERT_EQ(tr[0].fixes.size(), 2u);
+  EXPECT_NEAR(tr[0].fixes[0].t, 1767225600.5, 1e-6);
+  EXPECT_NEAR(tr[0].fixes[1].t, 1767225630.5, 1e-6);
+  EXPECT_NEAR(tr[0].fixes[1].lon, -99.97, 5e-5);
+  // 3100 ft throughout: the barometric fix (3000 ft + the aircraft's 100 ft offset) too.
+  for (auto& f : tr[0].fixes) {
+    EXPECT_NEAR(f.alt_m, 3100 * FT, 2.5);
+    EXPECT_NEAR(f.gs, 165.8 * KT, 0.5);
+  }
   // Coverage: the Cessna's 4 fixes span one minute and one 0.5 deg cell (40.0 N, 100.0 W).
   auto cov = parse_json(coverage_json());
   ASSERT_EQ(cov.at("days").as_array().size(), 1u);

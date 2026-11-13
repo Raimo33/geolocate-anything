@@ -181,7 +181,7 @@ TEST_F(Bucket, AdsbDaysGoToTheirBucketAndComeBackOnDemand) {
   tr.icao = 0x3c6444, tr.type = "C172";
   for (int i = 0; i < 20; ++i) {
     air::Fix f;
-    f.t = 1767312000.0 + 3600 + i * 2.0, f.lat = 48.1 + i * 1e-4, f.lon = 11.5, f.alt_m = 900, f.gs = 50, f.track = 0, f.vrate = 0;
+    f.t = 1767312000.0 + 3600 + i * 2.0, f.lat = 48.1 + i * 1e-4, f.lon = 11.5, f.alt_m = 900, f.gs = 5.56, f.track = 0, f.vrate = 0;
     tr.fixes.push_back(f);
   }
   const std::string day = "2026-01-02";
@@ -198,6 +198,6 @@ TEST_F(Bucket, AdsbDaysGoToTheirBucketAndComeBackOnDemand) {
   EXPECT_TRUE(air::ensure_day(day));
   auto back = air::load_tracks(1767312000.0 + 3600, 1767312000.0 + 3700);
   ASSERT_EQ(back.size(), 1u);
-  EXPECT_EQ(back[0].fixes.size(), 20u);
+  EXPECT_EQ(back[0].fixes.size(), 2u);  // a straight, steady line: its two ends
   EXPECT_FALSE(air::bucket::pull_day("2026-01-03"));
 }

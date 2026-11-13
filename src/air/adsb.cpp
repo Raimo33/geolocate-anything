@@ -29,10 +29,8 @@ namespace geo::air {
 
 namespace {
 
-// v1: fixed-width columns (still read). v2 (written): quantised, delta-coded varint
-// columns and a zstd-compressed index at the end.
-constexpr char MAGIC[8] = {'G', 'L', 'A', 'D', 'S', 'B', '0', '1'};
-constexpr char MAGIC2[8] = {'G', 'L', 'A', 'D', 'S', 'B', '0', '2'};
+// v3: trajectory nodes (older stores are not read: rebuild them).
+constexpr char MAGIC[8] = {'G', 'L', 'A', 'D', 'S', 'B', '0', '3'};
 constexpr int STORE_LEVEL = 19;  // zstd level of stored blobs (decoding speed does not depend on it)
 constexpr const char* TYPES_URL = "https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/db/icao_aircraft_types.js";
 constexpr const char* AIRCRAFT_URL = "https://raw.githubusercontent.com/wiedehopf/tar1090-db/csv/aircraft.csv.gz";
@@ -178,6 +176,7 @@ struct IndexEntry {
 };
 static_assert(sizeof(IndexEntry) == 72);
 
+// Ingest's scratch spill (every fix, fixed-width columns; never stored).
 std::string fixes_blob(const Track& tr) {
   const std::size_t n = tr.fixes.size();
   std::string raw;
@@ -235,16 +234,55 @@ Track track_of(const IndexEntry& e) {
   return tr;
 }
 
-// v2 blob: quantised to the source's own resolution (or finer), delta-coded, each value
-// zigzagged into 16 bits and split into a low-byte and a high-byte plane (larger values
-// escape to varints at the end), then zstd. Per fix:
-//   t       0.1 s from the track's first fix, delta (3 m at 60 m/s)
-//   lat/lon 1e-5 deg (1.1 m; ADS-B CPR positions resolve ~5 m), delta of delta
-//   alt     1 m, delta (ADS-B reports 25 ft steps)
-//   gs      0.1 kt, delta;  track 0.1 deg, delta wrapped;  vrate 1 ft/min, delta
-//   flags   byte: alt source (2 bits), leg start, gs/track/vrate missing
-// Every fix is kept. About 6 bytes a fix stored, against 18 for v1; on real days, byte
-// planes beat plain varints by 5% and a trained zstd dictionary or larger frames gain < 2%.
+// ---------------------------------------------------------------- v3: trajectory nodes
+//
+// A flight is a smooth curve, and the search reads it as one: a cubic Hermite curve
+// through positions and velocities (doppler.cpp). The store keeps only the nodes such a
+// curve needs, not ADS-B's fixes (one every 0.5-20 s):
+//
+// 1. Spikes out: a fix far from where both neighbours put it while they agree (a bad
+//    position decode, two aircraft on one address: > SPIKE_POS_M; a barometric glitch:
+//    > SPIKE_M up or down).
+// 2. Smoothing: each fix's position and velocity from a quadratic fitted by least squares
+//    to the fixes within SMOOTH_S (positions, and reported velocities weighted
+//    VEL_WEIGHT). ADS-B's jitter (metres, ~1 m/s) is averaged out, not followed.
+// 3. Nodes, per gap-free piece (split at leg starts and gaps > PIECE_GAP_S): from a node,
+//    the farthest fix whose Hermite curve from the node passes within TOL of every
+//    smoothed fix in between, at most MAX_SPAN_S on. A steady leg is a node every
+//    MAX_SPAN_S; turns, climbs and speed changes add the nodes they need.
+// 4. Nodes sit on whole seconds from the track's first fix (moved along their velocity).
+//
+// On 2026-09-08 (35k aircraft, 36.9M fixes): 8.5M nodes, 48 MB (v1 0.68 GB, v2 ~0.22 GB;
+// 2026-11-12: 33.0M fixes, 41 MB);
+// against the raw fixes, positions within 11 m (median) / 31 m (95%), radial velocity
+// (Doppler) within 0.7 / 5 m/s, about the raw fixes' own disagreement between reported
+// velocities and positions.
+//
+// A node is coded against the previous ones, in integers only (every machine decodes the
+// same values):
+//   dt        1 s
+//   velocity  east, north, up in VQ_MM mm/s: residual from the previous node's, changed
+//             by half its last change
+//   position  lat/lon in LQ deg, alt in AQ_MM mm: residual from the previous node moved
+//             by the mean of the two velocities (trapezoid)
+//   flags     alt source, leg start
+// each value zigzagged into 16 bits, split into low/high byte planes (larger values
+// escape to varints at the end), then zstd: 5.7 bytes a node.
+struct Tol {
+  double pos_h, pos_v, vel_h, vel_v;
+};
+constexpr Tol TOL{25.0, 15.0, 5.0, 3.0};  // m, m, m/s, m/s
+constexpr double MAX_SPAN_S = 100.0;     // below split_tracks' 120 s gap
+constexpr double PIECE_GAP_S = 120.0;
+constexpr double VEL_WEIGHT = 10.0;  // ~ position noise (m) / velocity noise (m/s)
+constexpr double SPIKE_M = 20.0;      // altitude
+constexpr double SPIKE_POS_M = 300.0;
+constexpr double SMOOTH_S = 6.0;          // smoothing half-window
+constexpr std::int64_t VQ_MM = 500;       // velocity unit, mm/s
+constexpr double LQ = 5e-5;               // lat/lon unit, deg (5.6 m)
+constexpr std::int64_t LQ_MM = 5560;      // LQ in mm along a meridian
+constexpr std::int64_t AQ_MM = 4000;      // altitude unit, mm
+
 void put_var(std::string& s, std::int64_t v) {
   std::uint64_t u = (std::uint64_t(v) << 1) ^ std::uint64_t(v >> 63);
   while (u >= 0x80) s += char(std::uint8_t(u) | 0x80), u >>= 7;
@@ -261,60 +299,66 @@ std::int64_t get_var(std::string_view& s) {
   }
   return std::int64_t(u >> 1) ^ -std::int64_t(u & 1);
 }
-constexpr std::uint8_t NO_GS = 8, NO_TRACK = 16, NO_VRATE = 32;
-constexpr int COLUMNS = 7;
+constexpr int COLUMNS = 7;  // dt, ve, vn, vu, lat, lon, alt
 constexpr std::uint64_t ESCAPE = 0xffff;
 
-std::string fixes_blob2(const std::vector<Fix>& fx, double t0) {
-  const std::size_t n = fx.size();
-  std::vector<std::int64_t> v;
-  v.reserve(n * COLUMNS);
-  auto delta = [&](auto quant) {
-    std::int64_t prev = 0;
-    for (auto& f : fx) {
-      const std::int64_t q = quant(f, prev);
-      v.push_back(q - prev);
-      prev = q;
-    }
-  };
-  auto delta2 = [&](auto quant) {
-    std::int64_t prev = 0, pd = 0;
-    for (std::size_t i = 0; i < n; ++i) {
-      const std::int64_t q = quant(fx[i]), d = q - prev;
-      v.push_back(i ? d - pd : q);
-      pd = i ? d : 0, prev = q;
-    }
-  };
-  // A missing value repeats the previous one (delta 0); its flag says it is missing.
-  auto q = [](float x, double scale, std::int64_t prev) { return std::isfinite(x) ? std::int64_t(std::llround(double(x) * scale)) : prev; };
-  delta([&](const Fix& f, std::int64_t) { return std::int64_t(std::llround((f.t - t0) * 10.0)); });
-  delta2([](const Fix& f) { return std::int64_t(std::llround(f.lat * 1e5)); });
-  delta2([](const Fix& f) { return std::int64_t(std::llround(f.lon * 1e5)); });
-  delta([&](const Fix& f, std::int64_t p) { return q(f.alt_m, 1.0, p); });
-  delta([&](const Fix& f, std::int64_t p) { return q(f.gs, 10.0 / KT, p); });
-  {
-    std::int64_t prev = 0;  // wrapped: 359.9 -> 0.1 is +2
-    for (auto& f : fx) {
-      const std::int64_t t = std::isfinite(f.track) ? (std::llround(double(f.track) * 10.0) % 3600 + 3600) % 3600 : prev;
-      v.push_back(((t - prev) % 3600 + 5400) % 3600 - 1800);
-      prev = t;
-    }
+// a / b rounded to nearest (b > 0).
+std::int64_t div_round(std::int64_t a, std::int64_t b) { return a >= 0 ? (a + b / 2) / b : -((-a + b / 2) / b); }
+
+struct QNode {
+  std::int64_t t = 0, ve = 0, vn = 0, vu = 0, lat = 0, lon = 0, alt = 0;
+  std::uint8_t flags = 0;
+};
+// The previous node moved by the trapezoid of the two velocities; across a gap or a
+// leg start, where there is no motion to follow, the previous position. Only a predictor
+// (its residual is stored), so approximate constants are fine; cos(lat) is quantised to
+// 1/4096 so that the result is exact integers.
+void predict(const QNode& p, QNode& q) {
+  const std::int64_t dt = q.t - p.t;
+  q.lat = p.lat, q.lon = p.lon, q.alt = p.alt;
+  if ((q.flags & 4) || dt > std::int64_t(PIECE_GAP_S)) return;
+  const std::int64_t c = std::max<std::int64_t>(1, std::llround(std::cos(double(p.lat) * LQ * DEG) * 4096.0));
+  q.lat += div_round((p.vn + q.vn) * dt * VQ_MM, 2 * LQ_MM);
+  q.lon += div_round((p.ve + q.ve) * dt * VQ_MM * 4096, 2 * LQ_MM * c);
+  q.alt += div_round((p.vu + q.vu) * dt * VQ_MM, 2 * AQ_MM);
+}
+
+// Velocity predictor: the previous node's, changed by half its last change (scaled by
+// the time steps), within a piece. Needs nd[i].t and flags.
+void predict_vel(const std::vector<QNode>& nd, std::size_t i, QNode& out) {
+  const QNode& a = nd[i - 1];
+  out.ve = a.ve, out.vn = a.vn, out.vu = a.vu;
+  auto starts = [&](std::size_t k) { return k == 0 || (nd[k].flags & 4) || nd[k].t - nd[k - 1].t > std::int64_t(PIECE_GAP_S); };
+  if (i < 2 || starts(i) || starts(i - 1)) return;
+  const QNode& b = nd[i - 2];
+  const std::int64_t h = nd[i].t - a.t, h0 = a.t - b.t;
+  out.ve += div_round((a.ve - b.ve) * h, 2 * h0), out.vn += div_round((a.vn - b.vn) * h, 2 * h0), out.vu += div_round((a.vu - b.vu) * h, 2 * h0);
+}
+
+std::string nodes_blob(const std::vector<QNode>& nd) {
+  const std::size_t n = nd.size();
+  std::vector<std::int64_t> v(n * COLUMNS);
+  for (std::size_t i = 0; i < n; ++i) {
+    const QNode& q = nd[i];
+    QNode pr, pred = q;  // first node: absolute values
+    pred.lat = pred.lon = pred.alt = 0;
+    if (i) pr = nd[i - 1], predict(pr, pred);
+    QNode pv = pr;
+    if (i) predict_vel(nd, i, pv);
+    const std::int64_t row[COLUMNS] = {q.t - pr.t, q.ve - pv.ve, q.vn - pv.vn, q.vu - pv.vu, q.lat - pred.lat, q.lon - pred.lon, q.alt - pred.alt};
+    for (int c = 0; c < COLUMNS; ++c) v[std::size_t(c) * n + i] = row[c];
   }
-  delta([&](const Fix& f, std::int64_t p) { return q(f.vrate, 1.0 / FPM, p); });
   std::string out(v.size() * 2 + n, '\0'), esc;
   for (std::size_t i = 0; i < v.size(); ++i) {
     std::uint64_t u = (std::uint64_t(v[i]) << 1) ^ std::uint64_t(v[i] >> 63);
     if (u >= ESCAPE) put_var(esc, v[i]), u = ESCAPE;
     out[i] = char(u & 0xff), out[v.size() + i] = char(u >> 8);
   }
-  for (std::size_t i = 0; i < n; ++i) {
-    const Fix& f = fx[i];
-    out[2 * v.size() + i] = char(std::uint8_t(f.alt_src) | (f.leg_start ? 4 : 0) | (std::isfinite(f.gs) ? 0 : NO_GS) |
-                                 (std::isfinite(f.track) ? 0 : NO_TRACK) | (std::isfinite(f.vrate) ? 0 : NO_VRATE));
-  }
+  for (std::size_t i = 0; i < n; ++i) out[2 * v.size() + i] = char(nd[i].flags);
   return out + esc;
 }
-std::vector<Fix> fixes_of2(std::string_view raw, std::size_t n, double t0) {
+
+std::vector<Fix> nodes_of(std::string_view raw, std::size_t n, double t0) {
   const std::size_t m = n * COLUMNS;
   if (raw.size() < 2 * m + n) throw std::runtime_error("truncated track store");
   std::string_view esc = raw.substr(2 * m + n);
@@ -324,37 +368,209 @@ std::vector<Fix> fixes_of2(std::string_view raw, std::size_t n, double t0) {
     v[i] = u == ESCAPE ? get_var(esc) : std::int64_t(u >> 1) ^ -std::int64_t(u & 1);
   }
   std::vector<Fix> fx(n);
-  const std::int64_t* c = v.data();
-  auto delta = [&](auto set) {
-    std::int64_t prev = 0;
-    for (std::size_t i = 0; i < n; ++i) set(fx[i], prev += c[i]);
-    c += n;
-  };
-  auto delta2 = [&](auto set) {
-    std::int64_t prev = 0, d = 0;
-    for (std::size_t i = 0; i < n; ++i) {
-      if (i) d += c[i], prev += d;
-      else prev = c[i];
-      set(fx[i], prev);
-    }
-    c += n;
-  };
-  delta([&](Fix& f, std::int64_t x) { f.t = t0 + double(x) / 10.0; });
-  delta2([](Fix& f, std::int64_t x) { f.lat = double(x) / 1e5; });
-  delta2([](Fix& f, std::int64_t x) { f.lon = double(x) / 1e5; });
-  delta([](Fix& f, std::int64_t x) { f.alt_m = float(x); });
-  delta([](Fix& f, std::int64_t x) { f.gs = float(double(x) * KT / 10.0); });
-  delta([](Fix& f, std::int64_t x) { f.track = float(double((x % 3600 + 3600) % 3600) / 10.0); });
-  delta([](Fix& f, std::int64_t x) { f.vrate = float(double(x) * FPM); });
+  std::vector<QNode> nd(n);
+  QNode prev;
+  const double vq = double(VQ_MM) / 1000.0;
   for (std::size_t i = 0; i < n; ++i) {
-    const auto b = std::uint8_t(raw[2 * m + i]);
-    fx[i].alt_src = AltSource(b & 3), fx[i].leg_start = b & 4;
-    if (b & NO_GS) fx[i].gs = NAN;
-    if (b & NO_TRACK) fx[i].track = NAN;
-    if (b & NO_VRATE) fx[i].vrate = NAN;
+    auto c = [&](int k) { return v[std::size_t(k) * n + i]; };
+    QNode& q = nd[i];
+    q.t = prev.t + c(0), q.flags = std::uint8_t(raw[2 * m + i]);
+    QNode pv = prev;
+    if (i) predict_vel(nd, i, pv);
+    q.ve = pv.ve + c(1), q.vn = pv.vn + c(2), q.vu = pv.vu + c(3);
+    if (i) predict(prev, q);
+    q.lat += c(4), q.lon += c(5), q.alt += c(6);
+    Fix& f = fx[i];
+    f.t = t0 + double(q.t);
+    f.lat = double(q.lat) * LQ, f.lon = double(q.lon) * LQ, f.alt_m = float(double(q.alt) * double(AQ_MM) / 1000.0);
+    const double ve = double(q.ve) * vq, vn = double(q.vn) * vq;
+    f.gs = float(std::hypot(ve, vn));
+    f.track = float(std::fmod(std::atan2(ve, vn) / DEG + 360.0, 360.0));
+    f.vrate = float(double(q.vu) * vq);
+    f.alt_src = AltSource(q.flags & 3), f.leg_start = q.flags & 4;
+    prev = q;
   }
   return fx;
 }
+
+// Cubic Hermite from (pa, va) at 0 to (pb, vb) at h, at t, as Path::state.
+void hermite(const Vec3& pa, const Vec3& va, const Vec3& pb, const Vec3& vb, double h, double t, Vec3& p, Vec3& v) {
+  const double s = t / h, s2 = s * s, s3 = s2 * s;
+  p = pa * (2 * s3 - 3 * s2 + 1) + va * ((s3 - 2 * s2 + s) * h) + pb * (-2 * s3 + 3 * s2) + vb * ((s3 - s2) * h);
+  v = pa * ((6 * s2 - 6 * s) / h) + va * (3 * s2 - 4 * s + 1) + pb * ((-6 * s2 + 6 * s) / h) + vb * (3 * s2 - 2 * s);
+}
+
+// The nodes of a track's fixes (time order), quantised.
+std::vector<QNode> simplify(const std::vector<Fix>& all, double t0) {
+  // Distinct times.
+  std::vector<Fix> fx;
+  fx.reserve(all.size());
+  for (auto& f : all)
+    if (fx.empty() || f.t > fx.back().t + 1e-3) fx.push_back(f);
+    else if (f.leg_start) fx.back().leg_start = true;
+  std::vector<Vec3> P, V;
+  std::vector<char> hasv;
+  auto states = [&] {
+    const std::size_t n = fx.size();
+    P.resize(n), V.resize(n), hasv.resize(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      const Fix& f = fx[i];
+      P[i] = ecef(f.lat, f.lon, std::isfinite(f.alt_m) ? f.alt_m : 0.0f);
+      hasv[i] = std::isfinite(f.gs) && std::isfinite(f.track);
+      V[i] = hasv[i] ? velocity_ecef(f.lat, f.lon, f.gs, f.track, std::isfinite(f.vrate) ? f.vrate : 0.0f) : Vec3{NAN, NAN, NAN};
+    }
+  };
+  // Spikes: a fix far from where both neighbours put it while they agree with each other
+  // (a bad position decode, two aircraft on one address, a barometric glitch).
+  states();
+  {
+    auto moved = [&](std::size_t a, double t) {
+      const Vec3 v = hasv[a] ? V[a] : Vec3{0, 0, 0};
+      return P[a] + v * (t - fx[a].t);
+    };
+    std::vector<char> drop(fx.size());
+    for (std::size_t i = 1; i + 1 < fx.size(); ++i) {
+      if (fx[i].leg_start || fx[i + 1].leg_start) continue;
+      const std::size_t a = i - 1, b = i + 1;
+      if (fx[b].t - fx[a].t > PIECE_GAP_S) continue;
+      const double m = (moved(a, fx[i].t) - P[i]).norm(), mb = (moved(b, fx[i].t) - P[i]).norm(), ab = (moved(a, fx[b].t) - P[b]).norm();
+      const Vec3 up = P[i] * (1.0 / P[i].norm());
+      const double dz = (P[i] - (P[a] + P[b]) * 0.5).dot(up), zab = std::abs((P[b] - P[a]).dot(up));
+      if ((m > SPIKE_POS_M && mb > SPIKE_POS_M && ab < SPIKE_POS_M) || (std::abs(dz) > SPIKE_M && zab < SPIKE_M / 2)) drop[i] = 1;
+    }
+    std::size_t w = 0;
+    for (std::size_t i = 0; i < fx.size(); ++i)
+      if (!drop[i]) fx[w++] = fx[i];
+      else if (fx[i].leg_start && w) fx[w - 1].leg_start = true;
+    fx.resize(w);
+  }
+  states();
+  const std::size_t n = fx.size();
+  std::vector<std::size_t> piece{0};
+  for (std::size_t i = 1; i < n; ++i)
+    if (fx[i].leg_start || fx[i].t - fx[i - 1].t > PIECE_GAP_S) piece.push_back(i);
+  piece.push_back(n);
+  // Smoothed state per fix: a quadratic in time, least squares over the fixes within
+  // SMOOTH_S (positions, and reported velocities weighted VEL_WEIGHT), in the fix's frame.
+  std::vector<Vec3> S(n), SV(n);
+  for (std::size_t pk = 0; pk + 1 < piece.size(); ++pk) {
+    const std::size_t a = piece[pk], b = piece[pk + 1];
+    std::size_t lo = a, hi = a;
+    for (std::size_t i = a; i < b; ++i) {
+      while (fx[i].t - fx[lo].t > SMOOTH_S) ++lo;
+      while (hi < b && fx[hi].t - fx[i].t <= SMOOTH_S) ++hi;
+      // p(t) = c0 + c1 t + c2 t^2 per axis (t from fix i): 3x3 normal equations, shared
+      // matrix, three right-hand sides.
+      double M[3][3] = {}, R[3][3] = {};
+      const double w2 = VEL_WEIGHT * VEL_WEIGHT;
+      for (std::size_t k = lo; k < hi; ++k) {
+        const double t = fx[k].t - fx[i].t, row[3] = {1, t, t * t};
+        const Vec3 d = P[k] - P[i];
+        const double y[3] = {d.x, d.y, d.z};
+        for (int r = 0; r < 3; ++r) {
+          for (int c = 0; c < 3; ++c) M[r][c] += row[r] * row[c];
+          for (int c = 0; c < 3; ++c) R[r][c] += row[r] * y[c];
+        }
+        if (hasv[k]) {
+          const double vr[3] = {0, 1, 2 * t}, vy[3] = {V[k].x, V[k].y, V[k].z};
+          for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) M[r][c] += w2 * vr[r] * vr[c];
+            for (int c = 0; c < 3; ++c) R[r][c] += w2 * vr[r] * vy[c];
+          }
+        }
+      }
+      // Too few equations for a quadratic: a line (c2 = 0), else the fix as reported.
+      int dim = 3;
+      auto solve = [&](int d, double out[3][3]) {
+        double A[3][4];
+        for (int c = 0; c < 3; ++c) {
+          for (int r = 0; r < d; ++r) {
+            for (int k = 0; k < d; ++k) A[r][k] = M[r][k];
+            A[r][d] = R[r][c];
+          }
+          for (int p = 0; p < d; ++p) {
+            if (std::abs(A[p][p]) < 1e-9) return false;
+            for (int r = p + 1; r < d; ++r) {
+              const double f = A[r][p] / A[p][p];
+              for (int k = p; k <= d; ++k) A[r][k] -= f * A[p][k];
+            }
+          }
+          for (int r = d - 1; r >= 0; --r) {
+            double s = A[r][d];
+            for (int k = r + 1; k < d; ++k) s -= A[r][k] * out[k][c];
+            out[r][c] = s / A[r][r];
+          }
+          for (int r = d; r < 3; ++r) out[r][c] = 0;
+        }
+        return true;
+      };
+      double C[3][3];
+      bool good = hi - lo >= 3 && solve(dim, C);
+      if (!good) dim = 2, good = solve(dim, C);
+      if (good) {
+        S[i] = P[i] + Vec3{C[0][0], C[0][1], C[0][2]}, SV[i] = {C[1][0], C[1][1], C[1][2]};
+      } else {
+        S[i] = P[i];
+        SV[i] = hasv[i] ? V[i] : (b - a > 1 ? (P[i + 1 < b ? i + 1 : i] - P[i > a ? i - 1 : i]) * (1.0 / std::max(1e-3, fx[i + 1 < b ? i + 1 : i].t - fx[i > a ? i - 1 : i].t)) : Vec3{0, 0, 0});
+      }
+    }
+  }
+  // Nodes: from a node, the farthest fix j such that the Hermite curve between their
+  // smoothed states passes within TOL of every smoothed state in between.
+  auto ok = [&](std::size_t i, std::size_t j) {
+    if (fx[j].t - fx[i].t > MAX_SPAN_S) return false;
+    const double h = fx[j].t - fx[i].t;
+    for (std::size_t k = i + 1; k < j; ++k) {
+      Vec3 p, v;
+      hermite(S[i], SV[i], S[j], SV[j], h, fx[k].t - fx[i].t, p, v);
+      const Vec3 up = S[k] * (1.0 / S[k].norm()), dp = p - S[k], dv = v - SV[k];
+      const double pz = dp.dot(up), vz = dv.dot(up);
+      if (!(std::abs(pz) <= TOL.pos_v && dp.dot(dp) - pz * pz <= TOL.pos_h * TOL.pos_h)) return false;
+      if (!(std::abs(vz) <= TOL.vel_v && dv.dot(dv) - vz * vz <= TOL.vel_h * TOL.vel_h)) return false;
+    }
+    return true;
+  };
+  std::vector<std::size_t> keep;
+  for (std::size_t pk = 0; pk + 1 < piece.size(); ++pk) {
+    const std::size_t a = piece[pk], b = piece[pk + 1];
+    std::size_t i = a;
+    keep.push_back(a);
+    while (i + 1 < b) {
+      std::size_t good = i + 1, step = 1;
+      while (good + step < b && ok(i, good + step)) good += step, step *= 2;
+      std::size_t lo = good, hi = std::min(b, good + step);
+      while (hi - lo > 1) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        (ok(i, mid) ? lo : hi) = mid;
+      }
+      keep.push_back(lo);
+      i = lo;
+    }
+  }
+  std::vector<QNode> nd;
+  nd.reserve(keep.size());
+  const double vq = double(VQ_MM) / 1000.0;
+  for (std::size_t i : keep) {
+    const Fix& f = fx[i];
+    // On a whole second: moved along the smoothed velocity.
+    const double t = std::round(f.t - t0);
+    if (!nd.empty() && t <= double(nd.back().t)) {  // that second has its node already
+      if (f.leg_start) nd.back().flags |= 4;
+      continue;
+    }
+    const Geodetic g = geodetic(S[i] + SV[i] * (t - (f.t - t0)));
+    const Vec3 ve = Enu(g.lat, g.lon).rot(SV[i]);
+    auto qv = [&](double x) { return std::isfinite(x) ? std::clamp<std::int64_t>(std::llround(x / vq), -5000, 5000) : 0; };
+    QNode q;
+    q.t = std::int64_t(t);
+    q.ve = qv(ve.x), q.vn = qv(ve.y), q.vu = qv(ve.z);
+    q.lat = std::llround(g.lat / LQ), q.lon = std::llround(g.lon / LQ), q.alt = std::llround(g.h * 1000.0 / double(AQ_MM));
+    q.flags = std::uint8_t(std::uint8_t(f.alt_src) | (f.leg_start ? 4 : 0));
+    nd.push_back(q);
+  }
+  return nd;
+}
+
 std::string zstd_compress(std::string_view raw, int level) {
   std::string out(ZSTD_compressBound(raw.size()), '\0');
   const std::size_t r = ZSTD_compress(out.data(), out.size(), raw.data(), raw.size(), level);
@@ -578,13 +794,23 @@ std::map<std::uint32_t, RegistryEntry> registry_lookup(const std::set<std::uint3
 
 fs::path adsb_dir() { return store::cache_dir() / "adsb"; }
 fs::path day_path(const std::string& day) { return adsb_dir() / (day + ".trk"); }
-bool has_day(const std::string& day) { return fs::exists(day_path(day)); }
+// A store in an older format is removed (it would not be read): the day is fetched again.
+bool has_day(const std::string& day) {
+  const fs::path p = day_path(day);
+  if (!fs::exists(p)) return false;
+  char m[8] = {};
+  std::ifstream(p, std::ios::binary).read(m, 8);
+  if (std::memcmp(m, MAGIC, 8) == 0) return true;
+  std::error_code ec;
+  fs::remove(p, ec);
+  return false;
+}
 
 std::vector<std::string> stored_days() {
   std::vector<std::string> out;
   std::error_code ec;
   for (auto& e : fs::directory_iterator(adsb_dir(), ec))
-    if (e.path().extension() == ".trk") out.push_back(e.path().stem().string());
+    if (e.path().extension() == ".trk" && has_day(e.path().stem().string())) out.push_back(e.path().stem().string());
   std::sort(out.begin(), out.end());
   return out;
 }
@@ -658,11 +884,12 @@ std::optional<Track> parse_trace(std::string_view text, const TypeDb& types, boo
 }
 
 namespace {
-// A v2 store: MAGIC2, the blobs in index order, zstd(index), u32 count, u32 index size.
-// fixes(e) gives each entry's fixes (called in parallel); returns the bytes written.
+// A store: MAGIC, the node blobs in index order, zstd(index), u32 count, u32 index size.
+// fixes(e) gives each entry's full fixes (called in parallel), reduced to nodes here;
+// returns the bytes written.
 template <class Fixes>
 std::uint64_t write_store(std::ostream& of, std::vector<IndexEntry> idx, Fixes&& fixes) {
-  of.write(MAGIC2, 8);
+  of.write(MAGIC, 8);
   std::uint64_t off = 0;
   constexpr std::size_t BATCH = 2048;  // encoded in parallel, written in order
   for (std::size_t s = 0; s < idx.size(); s += BATCH) {
@@ -670,8 +897,9 @@ std::uint64_t write_store(std::ostream& of, std::vector<IndexEntry> idx, Fixes&&
     std::vector<std::string> c(m);
     parallel_for(m, [&](std::size_t i) {
       auto& e = idx[s + i];
-      const std::vector<Fix> fx = fixes(e);
-      c[i] = zstd_compress(fixes_blob2(fx, e.t0), STORE_LEVEL);
+      const auto nd = simplify(fixes(e), e.t0);
+      e.nfix = std::uint32_t(nd.size());
+      c[i] = zstd_compress(nodes_blob(nd), STORE_LEVEL);
     });
     for (std::size_t i = 0; i < m; ++i) {
       idx[s + i].offset = off, idx[s + i].clen = std::uint32_t(c[i].size());
@@ -704,35 +932,18 @@ namespace {
 struct DayFile {
   MappedFile mf;
   std::vector<IndexEntry> idx;
-  std::size_t data_off = 0;
-  int version = 0;
   explicit DayFile(const fs::path& p) : mf(p) {
     std::string_view v = mf.view();
-    if (v.size() >= 16 && std::memcmp(v.data(), MAGIC2, 8) == 0) {
-      version = 2;
-      std::string_view tail = v.substr(v.size() - 8);
-      const auto n = get<std::uint32_t>(tail), zlen = get<std::uint32_t>(tail);
-      if (std::size_t(zlen) + 16 > v.size()) throw std::runtime_error("truncated track store: " + p.string());
-      const std::string raw = zstd_decompress(v.substr(v.size() - 8 - zlen, zlen));
-      if (raw.size() != std::size_t(n) * sizeof(IndexEntry)) throw std::runtime_error("corrupt track store index: " + p.string());
-      idx.resize(n);
-      std::memcpy(idx.data(), raw.data(), raw.size());
-      data_off = 8;
-      return;
-    }
-    if (v.size() < 12 || std::memcmp(v.data(), MAGIC, 8) != 0) throw std::runtime_error("not a track store: " + p.string());
-    version = 1;
-    v.remove_prefix(8);
-    const auto n = get<std::uint32_t>(v);
-    if (v.size() < std::size_t(n) * sizeof(IndexEntry)) throw std::runtime_error("truncated track store: " + p.string());
+    if (v.size() < 16 || std::memcmp(v.data(), MAGIC, 8) != 0) throw std::runtime_error("not a track store: " + p.string());
+    std::string_view tail = v.substr(v.size() - 8);
+    const auto n = get<std::uint32_t>(tail), zlen = get<std::uint32_t>(tail);
+    if (std::size_t(zlen) + 16 > v.size()) throw std::runtime_error("truncated track store: " + p.string());
+    const std::string raw = zstd_decompress(v.substr(v.size() - 8 - zlen, zlen));
+    if (raw.size() != std::size_t(n) * sizeof(IndexEntry)) throw std::runtime_error("corrupt track store index: " + p.string());
     idx.resize(n);
-    std::memcpy(idx.data(), v.data(), std::size_t(n) * sizeof(IndexEntry));
-    data_off = 12 + std::size_t(n) * sizeof(IndexEntry);
+    std::memcpy(idx.data(), raw.data(), raw.size());
   }
-  std::vector<Fix> fixes(const IndexEntry& e) const {
-    auto raw = zstd_decompress(mf.view().substr(data_off + e.offset, e.clen));
-    return version == 2 ? fixes_of2(raw, e.nfix, e.t0) : fixes_of(raw, e.nfix, e.t0);
-  }
+  std::vector<Fix> fixes(const IndexEntry& e) const { return nodes_of(zstd_decompress(mf.view().substr(8 + e.offset, e.clen)), e.nfix, e.t0); }
 };
 
 }  // namespace
@@ -757,8 +968,19 @@ std::map<std::pair<int, int>, double> day_coverage(const std::string& day, bool 
   parallel_for(df.idx.size(), [&](std::size_t i) {
     const auto fx = df.fixes(df.idx[i]);
     std::set<std::tuple<int, int, i64>> seen;  // (cell, minute) of this aircraft
-    for (auto& f : fx)
-      seen.insert({int(std::floor((f.lat + 90) / COVERAGE_DEG)), int(std::floor((f.lon + 180) / COVERAGE_DEG)), i64(std::floor(f.t / 60))});
+    auto add = [&](double lat, double lon, double t) {
+      seen.insert({int(std::floor((lat + 90) / COVERAGE_DEG)), int(std::floor((lon + 180) / COVERAGE_DEG)), i64(std::floor(t / 60))});
+    };
+    // Nodes are up to MAX_SPAN_S apart: the minutes between them count too.
+    for (std::size_t k = 0; k < fx.size(); ++k) {
+      const Fix& f = fx[k];
+      add(f.lat, f.lon, f.t);
+      if (k + 1 < fx.size() && !fx[k + 1].leg_start && fx[k + 1].t - f.t <= PIECE_GAP_S)
+        for (double t = f.t + 30; t < fx[k + 1].t; t += 30) {
+          const double s = (t - f.t) / (fx[k + 1].t - f.t);
+          add(f.lat + s * (fx[k + 1].lat - f.lat), f.lon + s * (fx[k + 1].lon - f.lon), t);
+        }
+    }
     std::map<std::pair<int, int>, double> loc;
     for (auto& [a, b, m] : seen) loc[{a, b}] += 1;
     std::lock_guard lk(mu);

@@ -240,7 +240,9 @@ are far below what anyone notices, pass through walls and survive phone codecs.
    harmonics.
 2. **Flight history.** ADSB.lol's daily archives (~4 GB/day) are streamed into a compact
    store of the day's non-jet tracks (`geoloc aircraft fetch DAY`), with altitudes put
-   above the WGS84 ellipsoid; ground heights from the Copernicus 90 m DEM.
+   above the WGS84 ellipsoid: each flight kept as the nodes of a smooth curve (a node
+   per turn, climb or speed change, one per 100 s on a steady leg; ~50 MB a day, within
+   ~10-30 m of the raw fixes); ground heights from the Copernicus 90 m DEM.
 3. **Corridors.** For each flyover, the 200 m cells along every flight of the right speed
    at the right slant distance.
 4. **One clock.** Cells where the flights' closest approaches are heard as far apart as
@@ -307,7 +309,7 @@ geoloc serve                                    # web dashboard on http://127.0.
 | `geoloc aircraft locate FILE --from ISO --to ISO --bbox W,S,E,N [--min-events N] [--json out]` | Aircraft-only search |
 
 Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`); ADS-B
-days under `adsb/` there (~0.22 GB each), DEM tiles under `dem/`.
+days under `adsb/` there (~50 MB each), DEM tiles under `dem/`.
 
 Environment (all optional): `GEOLOC_GRID_BUCKET` with `GEOLOC_S3_ENDPOINT_URL`, `GEOLOC_GRID_ACCESS_KEY_ID`,
 `GEOLOC_GRID_SECRET_ACCESS_KEY`, `GEOLOC_S3_REGION` mirrors the store to an S3 bucket (and
@@ -326,7 +328,7 @@ offline (`aircraft fetch FIRST..LAST --push --drop`) and kept there; a server pu
 day's coverage sidecar on start (the history map) and streams a day's store into its
 volume when an analysis first needs it; the dashboard's **Refetch day** (admin) rebuilds a
 day from ADSB.lol and uploads it; `GEOLOC_AIRPLANE_FETCH` lets `locate` (and so the
-dashboard) download an ADSB.lol day the bucket lacks (~4 GB streamed, ~0.22 GB kept, then
+dashboard) download an ADSB.lol day the bucket lacks (~4 GB streamed, ~50 MB kept, then
 uploaded to the bucket; at most `GEOLOC_AIRPLANE_MAX_FETCH` days per analysis, default 1), and
 `GEOLOC_AIRPLANE_KEEP_DAYS` keeps only that many days' stores, the ones used last (for a
 bounded volume); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the

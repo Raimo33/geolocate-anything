@@ -116,11 +116,15 @@ void add_views(AircraftStage& st, const Spectrogram& spec, Terrain& terrain) {
     const Bbox near{c.lon - 0.6, c.lat - 0.45, c.lon + 0.6, c.lat + 0.45};
     for (auto& tr : split_tracks(load_tracks(m.cpa_utc - 900, m.cpa_utc + 900, near))) {
       if (tr.icao != icao || tr.fixes.front().t > m.cpa_utc || tr.fixes.back().t < m.cpa_utc) continue;
-      double last = -INFINITY;
-      for (auto& f : tr.fixes)
-        if (std::abs(f.t - m.cpa_utc) <= 600 && f.t - last >= 4) fv.track.push_back({f.t, f.lat, f.lon, double(f.alt_m)}), last = f.t;
       const Path path = path_of(tr);
       if (path.empty()) break;
+      // The stored nodes are sparse: the drawn track samples the curve every 4 s.
+      for (double t = std::max(path.t0(), m.cpa_utc - 600); t <= std::min(path.t1(), m.cpa_utc + 600); t += 4) {
+        Vec3 p, vel;
+        path.state(t, p, vel);
+        const Geodetic g = geodetic(p);
+        fv.track.push_back({t, g.lat, g.lon, g.h});
+      }
       const Approach ap = closest_approach(path, o);
       Vec3 p, vel;
       path.state(ap.tau, p, vel);

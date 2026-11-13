@@ -7,7 +7,8 @@
 // designator, tar1090-db) are dropped before their bulk is parsed. What is kept is every
 // airborne fix of every other aircraft (propeller, turboprop, helicopter, unknown type):
 // time, position, altitude above the WGS84 ellipsoid, ground speed, track, vertical
-// rate. Stored as one zstd file per day under <cache>/adsb/.
+// rate, reduced to the nodes of a smooth curve through them (adsb.cpp: a steady leg is a
+// node every 100 s). Stored as one zstd file per day under <cache>/adsb/.
 //
 // Altitude: readsb's geometric altitude is GNSS height above the ellipsoid. Where a fix
 // has only barometric (pressure) altitude, it is corrected by the aircraft's own median
@@ -88,7 +89,7 @@ struct Track {
   std::string type;  // ICAO designator, may be empty
   std::string reg;
   TypeInfo info;
-  std::vector<Fix> fixes;  // airborne fixes, time order
+  std::vector<Fix> fixes;  // airborne fixes, time order (from a store: curve nodes)
   std::string id() const;  // "a1dfeb"
 };
 
