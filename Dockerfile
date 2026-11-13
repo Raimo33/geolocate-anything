@@ -8,7 +8,10 @@
 # .cpp files recompiles only those. Railway wants cache ids as s/<service id>-<path>.
 #
 # Build stage: the C++ toolchain, the -dev libraries, and a minimal static FFmpeg (only
-# the demuxers/decoders geoloc reads audio with, no threads, no network, no programs).
+# the demuxers/decoders geoloc reads audio with, no network, no programs). Built with
+# pthreads: geoloc decodes long files in chunks on several threads (one decoder each, each
+# single-threaded), and without them FFmpeg's one-time table setup is not thread-safe:
+# concurrent Opus decoders corrupted the heap.
 FROM ubuntu:26.04 AS build
 RUN --mount=type=cache,id=s/6d3bbf92-2dd3-41d1-b65b-3f33ab5232a7-/var/cache/apt,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=s/6d3bbf92-2dd3-41d1-b65b-3f33ab5232a7-/var/lib/apt,target=/var/lib/apt,sharing=locked \
@@ -20,7 +23,7 @@ ARG FFMPEG_VERSION=8.0.1
 RUN --mount=type=cache,id=s/6d3bbf92-2dd3-41d1-b65b-3f33ab5232a7-/cache/ffmpeg,target=/cache/ffmpeg <<'EOF'
 set -eu
 FLAGS="--prefix=/opt/ffmpeg --enable-static --disable-shared --enable-pic \
-  --disable-programs --disable-doc --disable-network --disable-autodetect --disable-pthreads \
+  --disable-programs --disable-doc --disable-network --disable-autodetect --enable-pthreads \
   --disable-avdevice --disable-avfilter --disable-swscale --disable-everything \
   --enable-zlib --enable-swresample --enable-protocol=file \
   --enable-demuxer=mov,matroska,ogg,wav,w64,mp3,aac,flac,aiff,caf,avi,asf,mpegts,mpegps,amr \
