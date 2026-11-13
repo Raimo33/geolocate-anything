@@ -156,6 +156,8 @@ endif()
 add_executable(geoloc src/main.cpp)
 target_compile_options(geoloc PRIVATE ${GEOLOC_WARN} ${GEOLOC_OPT})
 target_link_libraries(geoloc PRIVATE geoloc_core)
+# Exported symbols, so the crash handler's backtrace names functions even when stripped.
+target_link_options(geoloc PRIVATE -rdynamic)
 if(GEOLOC_PCH)
   target_precompile_headers(geoloc REUSE_FROM geoloc_core)
 endif()

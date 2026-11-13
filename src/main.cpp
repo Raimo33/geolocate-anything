@@ -1,5 +1,9 @@
 // geoloc: geolocate audio from background signals (power-grid hum, ...).
 #include <CLI/CLI.hpp>
+#include <execinfo.h>
+#include <unistd.h>
+
+#include <csignal>
 
 #include <cstdio>
 #include <set>
@@ -287,7 +291,20 @@ int cmd_refs_sync(bool is_push, const std::string& grid, bool progress) {
 
 }  // namespace
 
+// A crash prints the stack (raw addresses + exported symbols) to stderr before dying,
+// so a failed analysis on a server leaves something to go on in its logs.
+extern "C" void geoloc_crash(int sig) {
+  void* frames[64];
+  const int n = ::backtrace(frames, 64);
+  const char msg[] = "\ngeoloc: fatal signal, stack:\n";
+  [[maybe_unused]] auto w = ::write(2, msg, sizeof msg - 1);
+  ::backtrace_symbols_fd(frames, n, 2);
+  ::signal(sig, SIG_DFL);
+  ::raise(sig);
+}
+
 int main(int argc, char** argv) {
+  for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE}) ::signal(sig, geoloc_crash);
   CLI::App app{"Geolocate audio from background signals (power-grid hum, ...)", "geoloc"};
   app.set_version_flag("--version", std::string("geoloc ") + GEOLOC_VERSION);
   app.require_subcommand(1);

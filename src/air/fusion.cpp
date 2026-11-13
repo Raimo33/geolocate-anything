@@ -151,11 +151,15 @@ void add_views(AircraftStage& st, const Spectrogram& spec, Terrain& terrain) {
 
 AircraftStage run_aircraft(const std::string& path, const std::vector<Hypothesis>& hyps, const AircraftOptions& o) {
   AircraftStage st;
+  std::cerr << "aircraft: decoding at 4 kHz" << std::endl;
   auto au = audio::load_audio(path, SPEC_RATE);
+  std::cerr << "aircraft: spectrogram" << std::endl;
   const auto spec = whitened_spectrogram(au.samples);
   au.samples.clear();
   au.samples.shrink_to_fit();
+  std::cerr << "aircraft: detecting flyovers" << std::endl;
   st.detection = detect_events(spec);
+  std::cerr << "aircraft: " << st.detection.events.size() << " flyover(s)" << std::endl;
   if (st.detection.events.empty()) {
     st.notes.push_back("no aircraft flyover detected");
     return st;

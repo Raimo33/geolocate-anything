@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <map>
 
 #include "refs/sources.hpp"
@@ -439,6 +440,7 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
     return *whole;
   };
   {
+    std::cerr << "locate: audio decoded (" << rep.duration_s << " s), detecting hum" << std::endl;
     rep.hum = enf::detect_hum(au.samples, rate, &whole_spec(), dop);
   }
   if (o.split && (o.nominal || rep.hum.nominal)) {
@@ -448,6 +450,7 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
   if (rep.cuts.empty()) {
     Work w = prepare(whole_spec(), rep.hum, o);
     std::vector<Work*> ws{&w};
+    std::cerr << "locate: searching the hum" << std::endl;
     search_all(ws, o);
     finish(w, o);
     rep.hum = w.m.hum;
@@ -459,6 +462,7 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
     rep.segments.push_back({0, 0.0, rep.duration_s, std::move(w.m)});
     add_time_zone(rep);
     rep.consistency = consistency_checks(rep);
+    std::cerr << "locate: hum done" << std::endl;
     add_aircraft(rep, o);
     return rep;
   }
