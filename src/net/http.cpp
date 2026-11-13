@@ -330,7 +330,13 @@ void AsyncSemaphore::release() {
   }
 }
 
+std::recursive_mutex& event_loop_mutex() {
+  static std::recursive_mutex m;
+  return m;
+}
+
 void run_sync_void(const std::function<asio::awaitable<void>(asio::io_context&)>& f) {
+  std::lock_guard lk(event_loop_mutex());
   asio::io_context io;
   std::exception_ptr err;
   asio::co_spawn(io, f(io), [&](std::exception_ptr e) { err = e; });

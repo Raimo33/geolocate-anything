@@ -17,6 +17,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -136,9 +137,17 @@ asio::awaitable<void> parallel_for(std::vector<T> items, int parallel, F fn) {
   if (err) std::rethrow_exception(err);
 }
 
+// Asio is built without thread support (BOOST_ASIO_DISABLE_THREADS): its per-thread
+// state is process-wide, so two event loops on two threads at once corrupt each other.
+// run_sync / run_sync_void hold this lock (re-entrant: a loop may start a nested one on
+// its own thread) so worker threads that need the network (DEM tiles during a search)
+// take turns.
+std::recursive_mutex& event_loop_mutex();
+
 // Run one coroutine to completion on a fresh event loop (CLI entry points).
 template <class T>
 T run_sync(std::function<asio::awaitable<T>(asio::io_context&)> f) {
+  std::lock_guard lk(event_loop_mutex());
   asio::io_context io;
   std::optional<T> out;
   std::exception_ptr err;
