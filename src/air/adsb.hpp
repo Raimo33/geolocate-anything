@@ -103,6 +103,13 @@ fs::path day_path(const std::string& day);  // <cache>/adsb/<YYYY-MM-DD>.trk
 bool has_day(const std::string& day);
 std::vector<std::string> stored_days();
 
+// How much history covers each place: aircraft-minutes (distinct minutes an aircraft
+// had a fix in the cell) per 0.5 deg cell. One sidecar per day (<day>.cov), written at
+// ingest or computed on first use; `coverage_json` merges every stored day:
+// {cell_deg, days: [...], cells: [[south, west, aircraft_minutes], ...]}.
+inline constexpr double COVERAGE_DEG = 0.5;
+std::string coverage_json();
+
 struct IngestOptions {
   std::vector<std::string> parts;  // local tar parts in order; empty = download the release
   std::optional<Bbox> bbox;        // keep only fixes inside (default: the world)

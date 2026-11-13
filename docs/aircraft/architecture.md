@@ -154,6 +154,13 @@ and the map zooms to street level (a gray basemap fades in from zoom 7):
   in the recording, UTC and frequency, click hides the curves. Detections no aircraft
   explained are listed below.
 
+The **History** page has an **Aircraft history** switch: a separate overlay layer (its own
+map pane above the grids' coverage, which dims beneath it) colouring each 0.5° cell red
+to green by the aircraft-minutes of ADS-B history stored there (distinct minutes an
+aircraft had a fix in the cell, summed over the stored days; log scale up to the best
+cell), with its own legend section. Each day's grid is a sidecar `adsb/<day>.cov`
+written at ingest (or on first request), merged by `GET /api/adsb-coverage`.
+
 Upload option **Aircraft area → Use map view** passes the visible map as the search
 area for recordings without a hum match. The report carries this as `aircraft.flights`
 and `aircraft.spectra` (w × h bytes, base64) in `geoloc locate --json`/`--web-json`.

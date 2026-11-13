@@ -13,6 +13,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 
 #include "air/geodesy.hpp"
@@ -572,6 +573,56 @@ struct DayFile {
 
 }  // namespace
 
+namespace {
+
+// Aircraft-minutes per cell for one stored day, cached next to it.
+std::map<std::pair<int, int>, double> day_coverage(const std::string& day, bool force = false) {
+  std::map<std::pair<int, int>, double> out;
+  const fs::path side = adsb_dir() / (day + ".cov");
+  if (!force)
+    if (auto txt = read_file(side); txt && fs::last_write_time(side) >= fs::last_write_time(day_path(day))) {
+      for (auto& c : parse_json(*txt).as_object().at("cells").as_array()) {
+        auto& a = c.as_array();
+        out[{int(as_number(a[0])), int(as_number(a[1]))}] = as_number(a[2]);
+      }
+      return out;
+    }
+  DayFile df(day_path(day));
+  std::mutex mu;
+  parallel_for(df.idx.size(), [&](std::size_t i) {
+    const auto fx = df.fixes(df.idx[i]);
+    std::set<std::tuple<int, int, i64>> seen;  // (cell, minute) of this aircraft
+    for (auto& f : fx)
+      seen.insert({int(std::floor((f.lat + 90) / COVERAGE_DEG)), int(std::floor((f.lon + 180) / COVERAGE_DEG)), i64(std::floor(f.t / 60))});
+    std::map<std::pair<int, int>, double> loc;
+    for (auto& [a, b, m] : seen) loc[{a, b}] += 1;
+    std::lock_guard lk(mu);
+    for (auto& [k, v] : loc) out[k] += v;
+  });
+  json::array cells;
+  for (auto& [k, v] : out) cells.push_back(json::array{k.first, k.second, v});
+  atomic_write(side, dump(json::object{{"day", day}, {"cell_deg", COVERAGE_DEG}, {"cells", cells}}));
+  return out;
+}
+
+}  // namespace
+
+std::string coverage_json() {
+  std::map<std::pair<int, int>, double> all;
+  json::array days;
+  for (auto& d : stored_days()) {
+    try {
+      for (auto& [k, v] : day_coverage(d)) all[k] += v;
+      days.push_back(json::value(d));
+    } catch (const std::exception& e) {
+      std::cerr << "coverage of " << d << ": " << e.what() << std::endl;
+    }
+  }
+  json::array cells;
+  for (auto& [k, v] : all) cells.push_back(json::array{k.first * COVERAGE_DEG - 90, k.second * COVERAGE_DEG - 180, v});
+  return dump(json::object{{"cell_deg", COVERAGE_DEG}, {"days", days}, {"cells", cells}});
+}
+
 std::vector<Track> decode_tracks(std::string_view bytes) {
   TempFile tmp(".trk");
   atomic_write(tmp.path, bytes);
@@ -792,6 +843,7 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
   of.close();
   if (!of) throw std::runtime_error("cannot write " + tmp_out.string());
   fs::rename(tmp_out, out);
+  day_coverage(day, true);
   st.bytes_out = head.size() + body;
   sp = MappedFile();
   fs::remove(spill_path);

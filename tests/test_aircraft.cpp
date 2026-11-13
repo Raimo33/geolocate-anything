@@ -266,6 +266,14 @@ TEST(AircraftStore, IngestsADayFromLocalTarParts) {
   EXPECT_NEAR(tr[0].fixes[0].alt_m, 3100 * FT, 0.01);
   EXPECT_NEAR(tr[0].fixes[2].alt_m, 3100 * FT, 0.01);  // 3000 ft baro + 100 ft offset
   EXPECT_NEAR(tr[0].fixes[0].gs, 100 * KT, 1e-3);
+  // Coverage: the Cessna's 4 fixes span one minute and one 0.5 deg cell (40.0 N, 100.0 W).
+  auto cov = parse_json(coverage_json());
+  ASSERT_EQ(cov.at("days").as_array().size(), 1u);
+  auto& cells = cov.at("cells").as_array();
+  ASSERT_EQ(cells.size(), 1u);
+  EXPECT_DOUBLE_EQ(as_number(cells[0].as_array()[0]), 40.0);
+  EXPECT_DOUBLE_EQ(as_number(cells[0].as_array()[1]), -100.0);
+  EXPECT_DOUBLE_EQ(as_number(cells[0].as_array()[2]), 1.0);
   std::error_code ec;
   fs::remove_all(dir, ec);
 }

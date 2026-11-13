@@ -14,6 +14,7 @@
 #include <map>
 #include <openssl/sha.h>
 
+#include "air/adsb.hpp"
 #include "data.hpp"
 #include "locate.hpp"
 #include "net/http.hpp"
@@ -716,6 +717,9 @@ asio::awaitable<void> session(App& app, tcp::socket sock) {
           res = asset(req, app.areas, true);
         } else if (target == "/api/tz-areas") {
           res = asset(req, app.tz_areas, true);
+        } else if (target == "/api/adsb-coverage") {
+          // Cheap once each day's sidecar exists (a day without one takes a few seconds, once).
+          res = make(req, http::status::ok, air::coverage_json(), "application/json");
         } else if (target == "/api/grids") {
           res = json_resp(req, http::status::ok, locate::grid_table());
         } else if (target.starts_with("/api/locate/") && (m.method() == http::verb::get || m.method() == http::verb::delete_)) {

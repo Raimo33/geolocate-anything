@@ -221,6 +221,17 @@ details.more[open] summary svg { transform: rotate(90deg); }
 .data-head { padding: 20px 20px 4px; }
 .data-head h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
 .data-head .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+/* aircraft-history overlay switch */
+.ovl { display: flex; align-items: center; gap: 10px; margin: 0 20px 8px; padding: 9px 12px; border-radius: 12px; background: var(--surface-2); cursor: pointer; }
+.ovl input { display: none; }
+.ovl .sw { width: 30px; height: 18px; border-radius: 9px; background: var(--border); position: relative; flex: none; transition: background .15s; }
+.ovl .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface-1); transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.ovl input:checked + .sw { background: var(--series-1); }
+.ovl input:checked + .sw::after { transform: translateX(12px); }
+.ovl b { display: block; font-size: 13px; font-weight: 600; }
+.ovl small { font-size: 11.5px; color: var(--text-muted); }
+#map.adsb path.region { fill-opacity: .35; }
+.leaflet-adsb-pane canvas { opacity: .8; }
 /* fetch box: an idle call to action, or a live progress card while sources download */
 .fetch { margin: 12px 20px 8px; }
 .fetch .go {
@@ -409,6 +420,10 @@ details.more[open] summary svg { transform: rotate(90deg); }
     <div class="sub" id="data-sum"></div>
   </div>
   <div class="fetch" id="fetch"></div>
+  <label class="ovl" id="adsb-toggle" title="Overlay: how much aircraft (ADS-B) history is stored per 0.5° cell, for the aircraft search">
+    <input type="checkbox" id="adsb-on"><span class="sw"></span>
+    <span><b>Aircraft history</b><small id="adsb-sum">overlay</small></span>
+  </label>
   <div class="status-line" id="data-status"></div>
   <div class="scroll"><div class="gantt" id="gantt"></div>
     <div class="keys"><span><i style="background:linear-gradient(90deg,hsl(4 68% 47%) 0 50%,hsl(68 68% 47%) 80%,hsl(132 68% 47%))"></i>share of each month's seconds stored</span><span><i style="width:8px;height:8px;border-radius:50%;border:2px solid var(--text-muted)"></i>behind &gt; 1 week</span><span><i style="background:repeating-linear-gradient(45deg,transparent 0 3px,var(--text-muted) 3px 4px)"></i>none</span></div>
@@ -442,7 +457,7 @@ const ICON = {
 const icon = (k) => `<svg class="i" viewBox="0 0 24 24">${ICON[k]}</svg>`;
 
 // ---------------------------------------------------------------- map
-const map = L.map("map", { worldCopyJump: true, zoomSnap: 0.25, zoomControl: false }).setView([30, 10], 2.5);
+const map = L.map("map", { worldCopyJump: true, zoomSnap: 0.25, zoomControl: false, minZoom: 1, maxZoom: 16 }).setView([30, 10], 2.5);
 map.attributionControl.addAttribution("Borders: Natural Earth");
 // Street-level basemap once zoomed in (aircraft results): the coarse borders and the grid
 // fills fade out so the coast, roads and towns show.
@@ -452,7 +467,7 @@ L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_$
 }).addTo(map);
 const nearZoom = () => $("map").classList.toggle("near", map.getZoom() >= 7);
 map.on("zoomend", nearZoom);
-let countries = null, regionLayer = null, pin = null, airLayer = null, GRIDS = [];
+let countries = null, regionLayer = null, pin = null, airLayer = null, adsbLayer = null, GRIDS = [];
 const countriesReady = fetch(
   "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson"
 ).then((r) => r.json()).then((g) => {
@@ -471,6 +486,8 @@ const tzAreas = () => TZ_AREAS ? Promise.resolve(TZ_AREAS)
 function clearMarks() {
   if (pin) { pin.remove(); pin = null; }
   if (airLayer) { airLayer.remove(); airLayer = null; }
+  if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }
+  $("map").classList.remove("adsb");
   if (tzLayer) { tzLayer.remove(); tzLayer = null; }
 }
 const areasReady = fetch("api/grid-areas").then((r) => r.json()).then((g) => { AREAS = g.features; }).catch(() => { AREAS = []; });
@@ -559,6 +576,45 @@ function showCoverage(fly = true) {
     <div style="margin-top:6px"><span style="background:${css("--region-other")}"></span>No public data</div>`;
   $("legend").classList.remove("hidden");
   if (fly) map.flyTo([30, 10], innerWidth > 800 ? 2.5 : 1.5, { duration: 0.8 });
+  drawAdsb();
+}
+
+// ---------------------------------------------------------------- aircraft-history overlay
+// A separate layer (own pane, above the grids, below tooltips): aircraft-minutes stored per
+// 0.5 deg cell, red (little) .. green (the best-covered cell), on a log scale.
+let ADSB = null, adsbReq = null;
+map.createPane("adsb").style.zIndex = 450;
+const adsbRenderer = L.canvas({ pane: "adsb", padding: 0.3 });
+try { $("adsb-on").checked = localStorage.getItem("adsb-overlay") === "1"; } catch {}
+$("adsb-on").addEventListener("change", () => {
+  try { localStorage.setItem("adsb-overlay", $("adsb-on").checked ? "1" : "0"); } catch {}
+  drawAdsb();
+});
+const adsbLoad = () => adsbReq || (adsbReq = fetch("api/adsb-coverage").then((r) => r.json()).then((j) => {
+  ADSB = j;
+  $("adsb-sum").textContent = j.days.length ? `${j.days.length} day${j.days.length > 1 ? "s" : ""} stored · ${j.days[0]}${j.days.length > 1 ? " … " + j.days[j.days.length - 1] : ""}` : "no ADS-B days stored";
+  return j;
+}).catch(() => { adsbReq = null; $("adsb-sum").textContent = "unavailable"; return null; }));
+adsbLoad();
+const hours = (m) => m < 60 ? `${Math.round(m)} aircraft-min` : `${(m / 60).toFixed(m < 600 ? 1 : 0)} aircraft-h`;
+async function drawAdsb() {
+  if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }
+  $("adsb-legend")?.remove();
+  $("map").classList.remove("adsb");
+  if (!$("adsb-on").checked || $("v-data").classList.contains("hidden")) return;
+  const j = await adsbLoad();
+  if (!j || !$("adsb-on").checked || $("v-data").classList.contains("hidden")) return;
+  const max = Math.max(1, ...j.cells.map((c) => c[2])), lmax = Math.log1p(max), d = j.cell_deg;
+  const frac = (m) => Math.log1p(m) / lmax;
+  adsbLayer = L.layerGroup(j.cells.map(([s, w, m]) => L.rectangle([[s, w], [s + d, w + d]], {
+    renderer: adsbRenderer, stroke: false, fillColor: covColor(frac(m)), fillOpacity: 0.85,
+  }).bindTooltip(`<b>Aircraft history</b><br>${hours(m)} in this ${d}° cell<br>${j.days.length} day(s) stored`, { sticky: true }))).addTo(map);
+  $("map").classList.add("adsb");
+  $("legend").insertAdjacentHTML("beforeend", `<div id="adsb-legend" style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">
+    <div style="font-weight:600">Aircraft history (ADS-B)</div>
+    <div class="ramp" style="background:linear-gradient(90deg,${[0, .25, .5, .75, 1].map(covColor).join(",")})"></div>
+    <div class="ramp-k"><span>1 aircraft-min</span><span>${esc(hours(max))}</span></div></div>`);
+  $("legend").classList.remove("hidden");
 }
 
 // ---------------------------------------------------------------- reference data page
@@ -1164,6 +1220,8 @@ const planeSvg = (color, deg) => `<svg viewBox="0 0 24 24" style="transform:rota
 let AIR_MARKS = [];  // per flight: {line, plane, ray}
 function drawAircraft() {
   if (airLayer) { airLayer.remove(); airLayer = null; }
+  if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }
+  $("map").classList.remove("adsb");
   AIR_MARKS = [];
   const a = REPORT?.aircraft, best = airBest();
   if (!a || !best) return null;
