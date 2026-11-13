@@ -421,6 +421,7 @@ const Network& ips_shake() {
     n.mixed = true;
     n.archive = "Raspberry Shake and EarthScope";
     n.agree_r_nyquist = 0.7f, n.lone_noise_nyquist_mhz = 9.0f, n.lone_min_sd_mhz = 2.0f;
+    n.min_score_direct = ips().min_score;
     n.same_site_km = 1.0f;
     return n;
   }();
@@ -506,7 +507,10 @@ asio::awaitable<MonthResult> fetch_month(net::Http& http, const Network& net, co
     const std::string sid = s->id, site = sid.substr(0, sid.find('.', sid.find('.') + 1));
     bool dup = false;
     for (auto* p : pick) dup |= std::string(p->id).rfind(site + ".", 0) == 0 || km_apart(*p, *s) < net.same_site_km;
-    if (!dup && score_for(*s, year) >= net.min_score) pick.push_back(s);
+    // In a mixed network the direct stations keep their own network's cut (seismic_ips:
+    // 0.05): a station that seldom hums costs ~0.6 GB of EarthScope quota a month for nothing.
+    const bool direct = net.mixed && !std::string_view(s->id).starts_with("AM.");
+    if (!dup && score_for(*s, year) >= (direct ? net.min_score_direct : net.min_score)) pick.push_back(s);
     if (int(pick.size()) >= max_stations) break;
   }
   if (pick.empty()) throw NoData("no screened station covers " + month);

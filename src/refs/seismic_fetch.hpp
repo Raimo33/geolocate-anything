@@ -78,6 +78,7 @@ struct Network {
   float agree_r_nyquist = 0.7f;       // a pair with a Shake agrees from this r
   float lone_noise_nyquist_mhz = 0;   // a lone Shake must be this quiet (0: never alone)
   float lone_min_sd_mhz = 0;          // FuseOptions::lone_min_sd_mhz
+  float min_score_direct = 0;         // min_score for the non-Shake stations
 };
 const Network& east();
 const Network& west();
