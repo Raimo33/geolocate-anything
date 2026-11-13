@@ -3,9 +3,12 @@
 #include <CLI/CLI.hpp>
 
 #include <cstdio>
+#include <cmath>
 #include <iostream>
+#include <set>
 
 #include "air/adsb.hpp"
+#include "air/bucket.hpp"
 #include "air/events.hpp"
 #include "air/search.hpp"
 #include "air/terrain.hpp"
@@ -141,7 +144,7 @@ void register_commands(CLI::App& app, int& rc) {
     so.silence = !lo_no_silence, so.silence_whole = lo_silence_whole, so.unknown_types = !lo_known_types;
     const double t0 = so.start_min - 600, t1 = so.start_max + au.duration() + 600;
     bool any_day = false;
-    for (i64 d = floor_div(i64(t0), 86400); d <= floor_div(i64(t1), 86400); ++d) any_day |= has_day(iso_date(d * 86400));
+    for (i64 d = floor_div(i64(t0), 86400) - 1; d <= floor_div(i64(t1), 86400); ++d) any_day |= ensure_day(iso_date(d * 86400));
     if (!any_day) std::printf("no ADS-B history stored for this window: run `geoloc aircraft fetch DAY`\n");
     Terrain terrain(!lo_offline);
     auto res = search_regions(
@@ -160,36 +163,110 @@ void register_commands(CLI::App& app, int& rc) {
   });
 
   // aircraft fetch DAY...
-  auto* fe = air->add_subcommand("fetch", "store a day of ADSB.lol history (non-jet aircraft), downloading ~4 GB per day");
+  auto* fe = air->add_subcommand("fetch", "store days of ADSB.lol history (non-jet aircraft), reading ~4 GB per day");
   static std::vector<std::string> fe_days, fe_parts;
   static std::string fe_bbox;
-  static bool fe_force = false, fe_jets = false;
-  fe->add_option("day", fe_days, "UTC day(s), YYYY-MM-DD")->required();
+  static bool fe_force = false, fe_jets = false, fe_push = false, fe_drop = false, fe_json = false;
+  fe->add_option("day", fe_days, "UTC day(s), YYYY-MM-DD, or ranges FIRST..LAST (fetched newest first)")->required();
   fe->add_option("--parts", fe_parts, "read the day's tar parts from these local files instead of downloading (one day only)");
   fe->add_option("--bbox", fe_bbox, "keep only fixes inside WEST,SOUTH,EAST,NORTH");
   fe->add_flag("--jets", fe_jets, "keep jets too");
-  fe->add_flag("--force", fe_force, "fetch again even when stored");
+  fe->add_flag("--force", fe_force, "fetch again even when stored (here, or in the bucket with --push)");
+  fe->add_flag("--push", fe_push, "upload each day to the ADS-B bucket (GEOLOC_AIRPLANE_BUCKET); days it holds are skipped");
+  fe->add_flag("--drop", fe_drop, "with --push: delete each day's local store once uploaded (backfilling on a small disk)");
+  fe->add_flag("--json", fe_json, "print a JSON summary (the dashboard's refetch job)");
   fe->callback([&rc] {
     if (!fe_parts.empty() && fe_days.size() != 1) throw std::invalid_argument("--parts takes one day");
+    if (fe_drop && !fe_push) throw std::invalid_argument("--drop needs --push");
+    if (fe_push && !bucket::enabled()) throw std::invalid_argument("--push needs GEOLOC_AIRPLANE_BUCKET");
+    std::vector<std::string> days;
+    for (auto& spec : fe_days) {
+      const auto dots = spec.find("..");
+      const std::string a = spec.substr(0, dots), b = dots == std::string::npos ? a : spec.substr(dots + 2);
+      const auto ta = parse_iso_utc(a), tb = parse_iso_utc(b);
+      if (!ta || !tb || a.size() != 10 || b.size() != 10) throw std::invalid_argument("day must be YYYY-MM-DD or FIRST..LAST: " + spec);
+      for (i64 d = floor_div(i64(*tb), 86400); d >= floor_div(i64(*ta), 86400); --d) days.push_back(iso_date(d * 86400));
+    }
+    std::set<std::string> in_bucket;
+    if (fe_push && !fe_force) in_bucket = bucket::days();
     rc = 0;
-    for (auto& day : fe_days) {
-      if (has_day(day) && !fe_force) {
-        std::printf("%s: already stored (%s)\n", day.c_str(), day_path(day).c_str());
+    json::array report;
+    for (auto& day : days) {
+      json::object r{{"day", day}};
+      if (in_bucket.contains(day)) {
+        if (!fe_json) std::printf("%s: already in the bucket\n", day.c_str());
+        r["state"] = "in bucket";
+        report.push_back(r);
         continue;
       }
-      IngestOptions o;
-      o.parts = fe_parts, o.bbox = parse_bbox(fe_bbox), o.keep_jets = fe_jets;
-      try {
-        auto st = ingest_day(day, o);
-        std::printf("%s: %s, %zu traces read, %zu kept, %zu jets dropped, %zu without airborne fixes, %zu of unknown type\n", day.c_str(),
-                    st.release.c_str(), st.members, st.kept, st.jets, st.ground_only, st.unknown_type);
-        std::printf("  %zu fixes: %zu barometric altitude corrected per aircraft, %zu per region, %zu uncorrected; %.0f MB in, %.1f MB stored\n",
-                    st.fixes, st.baro_track, st.baro_region, st.baro_raw, st.bytes_in / 1e6, st.bytes_out / 1e6);
-      } catch (const std::exception& e) {
-        std::fprintf(stderr, "%s: %s\n", day.c_str(), e.what());
-        rc = 1;
+      if (has_day(day) && !fe_force) {
+        if (!fe_json) std::printf("%s: already stored (%s)\n", day.c_str(), day_path(day).c_str());
+        r["state"] = "stored";
+      } else {
+        IngestOptions o;
+        o.parts = fe_parts, o.bbox = parse_bbox(fe_bbox), o.keep_jets = fe_jets;
+        try {
+          auto st = ingest_day(day, o);
+          if (!fe_json) {
+            std::printf("%s: %s, %zu traces read, %zu kept, %zu jets dropped, %zu without airborne fixes, %zu of unknown type\n", day.c_str(),
+                        st.release.c_str(), st.members, st.kept, st.jets, st.ground_only, st.unknown_type);
+            std::printf("  %zu fixes: %zu barometric altitude corrected per aircraft, %zu per region, %zu uncorrected; %.0f MB in, %.1f MB stored\n",
+                        st.fixes, st.baro_track, st.baro_region, st.baro_raw, st.bytes_in / 1e6, st.bytes_out / 1e6);
+            std::fflush(stdout);
+          }
+          r["state"] = "fetched", r["release"] = st.release, r["aircraft"] = st.kept, r["fixes"] = st.fixes;
+          r["mb_in"] = std::round(st.bytes_in / 1e5) / 10, r["mb_stored"] = std::round(st.bytes_out / 1e5) / 10;
+        } catch (const std::exception& e) {
+          std::fprintf(stderr, "%s: %s\n", day.c_str(), e.what());
+          r["state"] = "error", r["error"] = e.what();
+          report.push_back(r);
+          rc = 1;
+          continue;
+        }
       }
+      if (fe_push) {
+        try {
+          bucket::push({day});
+          r["pushed"] = true;
+          if (fe_drop)
+            for (const char* ext : {".trk", ".used"}) fs::remove(adsb_dir() / (day + ext));
+        } catch (const std::exception& e) {
+          std::fprintf(stderr, "%s: %s\n", day.c_str(), e.what());
+          r["state"] = "error", r["error"] = e.what();
+          rc = 1;
+        }
+      }
+      report.push_back(r);
     }
+    if (fe_json) std::printf("%s\n", dump(json::object{{"days", report}}).c_str());
+  });
+
+  // aircraft push [DAY...]
+  auto* pu = air->add_subcommand("push", "upload stored ADS-B days to the ADS-B bucket (GEOLOC_AIRPLANE_BUCKET)");
+  static std::vector<std::string> pu_days;
+  pu->add_option("day", pu_days, "UTC day(s), YYYY-MM-DD (default: every stored day)");
+  pu->callback([&rc] {
+    if (!bucket::enabled()) throw std::invalid_argument("GEOLOC_AIRPLANE_BUCKET is not set");
+    std::printf("%d day(s) uploaded\n", bucket::push(pu_days));
+    rc = 0;
+  });
+
+  // aircraft pull [DAY...]
+  auto* pl = air->add_subcommand("pull", "download ADS-B days (and every day's coverage) from the ADS-B bucket");
+  static std::vector<std::string> pl_days;
+  static bool pl_progress = false;
+  pl->add_option("day", pl_days, "UTC day(s), YYYY-MM-DD (default: only the coverage sidecars)");
+  pl->add_flag("--progress-json", pl_progress, "progress as JSON lines");
+  pl->callback([&rc] {
+    if (!bucket::enabled()) throw std::invalid_argument("GEOLOC_AIRPLANE_BUCKET is not set");
+    rc = 0;
+    for (auto& d : pl_days)
+      if (!has_day(d) && !bucket::pull_day(d)) std::fprintf(stderr, "%s: not in the bucket\n", d.c_str()), rc = 1;
+    const int n = bucket::pull_coverage([](int done, int total) {
+      if (pl_progress) std::printf("%s\n", dump(json::object{{"done", done}, {"total", total}}).c_str()), std::fflush(stdout);
+    });
+    if (pl_progress) std::printf("%s\n", dump(json::object{{"files", n}}).c_str());
+    else std::printf("%d coverage file(s) downloaded\n", n);
   });
 }
 

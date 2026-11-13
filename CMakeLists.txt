@@ -84,6 +84,7 @@ add_library(geoloc_core STATIC
   src/air/spectrogram.cpp
   src/air/events.cpp
   src/air/adsb.cpp
+  src/air/bucket.cpp
   src/air/terrain.cpp
   src/air/search.cpp
   src/air/fusion.cpp
@@ -91,6 +92,7 @@ add_library(geoloc_core STATIC
   src/net/http.cpp
   src/net/zip.cpp
   src/net/spawn.cpp
+  src/net/s3.cpp
   src/refs/parsers.cpp
   src/refs/sheets.cpp
   src/refs/aemo_annual.cpp

@@ -302,11 +302,12 @@ geoloc serve                                    # web dashboard on http://127.0.
 | `geoloc refs import-aemo FILE...` | Import AEMO's hand-downloaded yearly workbooks |
 | `geoloc locate FILE [--aircraft auto\|on\|off] [--aircraft-bbox W,S,E,N] [--aircraft-fetch]` | Hum and aircraft together |
 | `geoloc aircraft events FILE [--json out]` | Flyovers in a recording (CPA time, speed, slant distance, rest frequency) |
-| `geoloc aircraft fetch DAY... [--parts A B] [--bbox W,S,E,N]` | Store a day of ADSB.lol history (non-jets) |
+| `geoloc aircraft fetch DAY\|FIRST..LAST... [--push [--drop]] [--force] [--parts A B] [--bbox W,S,E,N]` | Store days of ADSB.lol history (non-jets), newest first; `--push` uploads each to the aircraft bucket (skipping days it holds), `--drop` then frees the local copy |
+| `geoloc aircraft push [DAY...]` \| `pull [DAY...]` | Sync ADS-B days with the aircraft bucket (`pull` alone: every day's coverage sidecar) |
 | `geoloc aircraft locate FILE --from ISO --to ISO --bbox W,S,E,N [--min-events N] [--json out]` | Aircraft-only search |
 
 Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`); ADS-B
-days under `adsb/` there (~0.7 GB each), DEM tiles under `dem/`.
+days under `adsb/` there (~0.22 GB each), DEM tiles under `dem/`.
 
 Environment (all optional): `GEOLOC_GRID_BUCKET` with `GEOLOC_S3_ENDPOINT_URL`, `GEOLOC_GRID_ACCESS_KEY_ID`,
 `GEOLOC_GRID_SECRET_ACCESS_KEY`, `GEOLOC_S3_REGION` mirrors the store to an S3 bucket (and
@@ -319,10 +320,16 @@ sources (`seismic_cn_*`, `seismic_swis`, `seismic_darwin`, `seismic_ips_shake`),
 are backfilled on a separate machine and pushed (`refs push`), never refreshed by the
 dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_GEOFON_REFRESH` enables `seismic_estonia` (a closed period, ~4 GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
 2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);
-`GEOLOC_AIRPLANE_FETCH` lets `locate` (and so the dashboard) download the ADSB.lol day a
-recording needs (~4 GB streamed, ~0.7 GB kept; at most `GEOLOC_AIRPLANE_MAX_FETCH` days per
-analysis, default 1), and `GEOLOC_AIRPLANE_KEEP_DAYS` keeps only that many days, the ones used
-last (for a bounded volume); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
+`GEOLOC_AIRPLANE_BUCKET` with `GEOLOC_AIRPLANE_ACCESS_KEY_ID`, `GEOLOC_AIRPLANE_SECRET_ACCESS_KEY`
+(endpoint and region from `GEOLOC_S3_*`) is the ADS-B store's own bucket: days are built
+offline (`aircraft fetch FIRST..LAST --push --drop`) and kept there; a server pulls every
+day's coverage sidecar on start (the history map) and streams a day's store into its
+volume when an analysis first needs it; the dashboard's **Refetch day** (admin) rebuilds a
+day from ADSB.lol and uploads it; `GEOLOC_AIRPLANE_FETCH` lets `locate` (and so the
+dashboard) download an ADSB.lol day the bucket lacks (~4 GB streamed, ~0.22 GB kept, then
+uploaded to the bucket; at most `GEOLOC_AIRPLANE_MAX_FETCH` days per analysis, default 1), and
+`GEOLOC_AIRPLANE_KEEP_DAYS` keeps only that many days' stores, the ones used last (for a
+bounded volume); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
 cores, 4 to 8), and how many threads `locate` uses (default: every core): a search
 spreads its blocks over them (~30 MB each), long compressed audio is decoded and
 resampled in 30 s chunks on them (the same samples as one pass), and the faint-hum

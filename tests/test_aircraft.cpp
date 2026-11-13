@@ -189,7 +189,7 @@ TEST(AircraftStore, EncodeDecodeRoundTrip) {
   for (int i = 0; i < 50; ++i) {
     Fix f;
     f.t = 1788898649.25 + i * 4.5, f.lat = 40.8 + i * 1e-3, f.lon = -73.5 - i * 2e-3;
-    f.alt_m = 1500.5f + float(i), f.gs = 130, f.track = 271.5f, f.vrate = -1.5f;
+    f.alt_m = 1500.5f + float(i), f.gs = 130, f.track = i == 7 ? NAN : 355.0f + float(i) * 0.5f, f.vrate = i == 3 ? NAN : -1.5f;
     f.alt_src = i % 2 ? AltSource::BaroTrack : AltSource::Geometric;
     f.leg_start = i == 10;
     a.fixes.push_back(f);
@@ -202,10 +202,16 @@ TEST(AircraftStore, EncodeDecodeRoundTrip) {
   EXPECT_EQ(back[0].info.engine, EngineType::Turboprop);
   ASSERT_EQ(back[0].fixes.size(), 50u);
   for (std::size_t i = 0; i < 50; ++i) {
-    EXPECT_NEAR(back[0].fixes[i].t, a.fixes[i].t, 1e-3);
-    EXPECT_NEAR(back[0].fixes[i].lat, a.fixes[i].lat, 1e-6);
-    EXPECT_NEAR(back[0].fixes[i].lon, a.fixes[i].lon, 1e-6);
-    EXPECT_EQ(back[0].fixes[i].alt_m, a.fixes[i].alt_m);
+    // Stored at 0.1 s, 1e-5 deg, 1 m, 0.1 kt, 0.1 deg, 1 ft/min.
+    EXPECT_NEAR(back[0].fixes[i].t, a.fixes[i].t, 0.05);
+    EXPECT_NEAR(back[0].fixes[i].lat, a.fixes[i].lat, 5e-6);
+    EXPECT_NEAR(back[0].fixes[i].lon, a.fixes[i].lon, 5e-6);
+    EXPECT_NEAR(back[0].fixes[i].alt_m, a.fixes[i].alt_m, 0.5);
+    EXPECT_NEAR(back[0].fixes[i].gs, a.fixes[i].gs, 0.03);
+    if (std::isnan(a.fixes[i].track)) EXPECT_TRUE(std::isnan(back[0].fixes[i].track));
+    else EXPECT_NEAR(std::remainder(back[0].fixes[i].track - a.fixes[i].track, 360.0), 0.0, 0.05);
+    if (std::isnan(a.fixes[i].vrate)) EXPECT_TRUE(std::isnan(back[0].fixes[i].vrate));
+    else EXPECT_NEAR(back[0].fixes[i].vrate, a.fixes[i].vrate, 0.003);
     EXPECT_EQ(back[0].fixes[i].alt_src, a.fixes[i].alt_src);
     EXPECT_EQ(back[0].fixes[i].leg_start, a.fixes[i].leg_start);
   }
@@ -263,8 +269,8 @@ TEST(AircraftStore, IngestsADayFromLocalTarParts) {
   ASSERT_EQ(tr.size(), 1u);
   EXPECT_EQ(tr[0].type, "C172");
   ASSERT_EQ(tr[0].fixes.size(), 4u);
-  EXPECT_NEAR(tr[0].fixes[0].alt_m, 3100 * FT, 0.01);
-  EXPECT_NEAR(tr[0].fixes[2].alt_m, 3100 * FT, 0.01);  // 3000 ft baro + 100 ft offset
+  EXPECT_NEAR(tr[0].fixes[0].alt_m, 3100 * FT, 0.5);  // stored to the metre
+  EXPECT_NEAR(tr[0].fixes[2].alt_m, 3100 * FT, 0.5);  // 3000 ft baro + 100 ft offset
   EXPECT_NEAR(tr[0].fixes[0].gs, 100 * KT, 1e-3);
   // Coverage: the Cessna's 4 fixes span one minute and one 0.5 deg cell (40.0 N, 100.0 W).
   auto cov = parse_json(coverage_json());

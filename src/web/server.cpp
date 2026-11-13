@@ -15,6 +15,7 @@
 #include <openssl/sha.h>
 
 #include "air/adsb.hpp"
+#include "air/bucket.hpp"
 #include "data.hpp"
 #include "locate.hpp"
 #include "net/http.hpp"
@@ -395,13 +396,14 @@ struct App {
   Asset page, areas, tz_areas;
   Refresher refresher;
   net::AsyncSemaphore analyses;  // concurrent analysis processes
+  net::AsyncSemaphore adsb_fetches;  // ADS-B day refetches (~4 GB read each), one at a time
   std::string token = env("GEOLOC_ADMIN_TOKEN");
   std::string exe = net::self_exe();
   App(asio::io_context& i)
       : io(i), page(Asset::make(data::dashboard_html(), "text/html; charset=utf-8")),
         areas(Asset::make(data::grid_areas_json(), "application/geo+json")),
         tz_areas(Asset::make(data::tz_areas_json(), "application/geo+json")), refresher(i, refs::remote::enabled()),
-        analyses(i.get_executor(), 2) {}
+        analyses(i.get_executor(), 2), adsb_fetches(i.get_executor(), 1) {}
 };
 
 using Response = http::response<http::string_body>;
@@ -476,8 +478,9 @@ void prune_jobs(App& app) {
   std::erase_if(app.jobs, [&](auto& kv) { return kv.second->state == Job::State::Done && now - kv.second->finished > 900; });
 }
 
-asio::awaitable<void> run_job(App& app, std::shared_ptr<Job> job, std::vector<std::string> argv, std::shared_ptr<TempFile> file) {
-  co_await app.analyses.acquire();
+asio::awaitable<void> run_job(App& app, std::shared_ptr<Job> job, std::vector<std::string> argv, std::shared_ptr<TempFile> file,
+                              net::AsyncSemaphore& slots) {
+  co_await slots.acquire();
   net::ChildResult res;
   if (job->state == Job::State::Queued) {  // else cancelled while waiting for a slot
     job->state = Job::State::Running;
@@ -493,7 +496,7 @@ asio::awaitable<void> run_job(App& app, std::shared_ptr<Job> job, std::vector<st
       res.out = dump(error_obj(std::string("cannot start the analysis: ") + e.what()));
     }
   }
-  app.analyses.release();
+  slots.release();
   job->pid = 0;
   if (job->state == Job::State::Cancelling) {
     job->status = 409;
@@ -598,13 +601,13 @@ asio::awaitable<Upload> receive_upload(beast::tcp_stream& stream, beast::flat_bu
 
 // Starts argv as a job the page polls (GET /api/locate/<id>); the upload's temporary
 // file belongs to the job.
-Response start_job(App& app, const Req& req, std::vector<std::string> argv, TempFile file) {
+Response start_job(App& app, const Req& req, std::vector<std::string> argv, std::optional<TempFile> file, net::AsyncSemaphore* slots = nullptr) {
   prune_jobs(app);
   auto job = std::make_shared<Job>();
   std::string id = std::to_string(app.next_job++) + "-" + std::to_string(std::uint64_t(now_seconds() * 1000) % 1000000);
   app.jobs[id] = job;
-  auto tmp = std::make_shared<TempFile>(std::move(file));
-  asio::co_spawn(app.io, run_job(app, job, std::move(argv), tmp), asio::detached);
+  auto tmp = file ? std::make_shared<TempFile>(std::move(*file)) : nullptr;
+  asio::co_spawn(app.io, run_job(app, job, std::move(argv), tmp, slots ? *slots : app.analyses), asio::detached);
   return json_resp(req, http::status::accepted, json::object{{"job", id}, {"state", Job::name(job->state)}});
 }
 
@@ -679,6 +682,24 @@ asio::awaitable<Response> handle_refresh(App& app, const http::request<http::str
   co_return json_resp(req, http::status::ok, app.refresher.snapshot());
 }
 
+// POST /api/adsb-refetch {"day": "YYYY-MM-DD"} (admin): the day built again from ADSB.lol
+// (`aircraft fetch --force`, ~4 GB read, a few minutes) and, with an ADS-B bucket,
+// uploaded there. A job the page polls (GET /api/locate/<id>); its result lists the day.
+Response handle_adsb_refetch(App& app, const http::request<http::string_body>& m) {
+  const Req req = Req::of(m);
+  if (!admin_ok(app, m[http::field::authorization])) return json_resp(req, http::status::unauthorized, error_obj("refetching needs the admin token"));
+  std::string day;
+  try {
+    day = jstr(parse_json(m.body()), "day");
+  } catch (...) {
+  }
+  const auto t = parse_iso_utc(day);
+  if (day.size() != 10 || !t || *t > now_seconds()) return json_resp(req, http::status::bad_request, error_obj("expected a past UTC day, YYYY-MM-DD"));
+  std::vector<std::string> argv{app.exe, "aircraft", "fetch", day, "--force", "--json"};
+  if (air::bucket::enabled()) argv.push_back("--push");
+  return start_job(app, req, std::move(argv), std::nullopt, &app.adsb_fetches);
+}
+
 asio::awaitable<void> session(App& app, tcp::socket sock) {
   beast::tcp_stream stream(std::move(sock));
   beast::flat_buffer buf;
@@ -724,6 +745,8 @@ asio::awaitable<void> session(App& app, tcp::socket sock) {
           res = json_resp(req, http::status::ok, locate::grid_table());
         } else if (target.starts_with("/api/locate/") && (m.method() == http::verb::get || m.method() == http::verb::delete_)) {
           res = handle_job(app, req, m.method(), target.substr(12));
+        } else if (target == "/api/adsb-refetch" && m.method() == http::verb::post) {
+          res = handle_adsb_refetch(app, m);
         } else if (target == "/api/refresh" && (m.method() == http::verb::get || m.method() == http::verb::post)) {
           res = co_await handle_refresh(app, m);
         } else {
@@ -763,6 +786,15 @@ void serve(const std::string& host, int port) {
   asio::co_spawn(io, listen(app, {addr, static_cast<unsigned short>(port)}), [](std::exception_ptr e) {
     if (e) std::rethrow_exception(e);
   });
+  // The ADS-B bucket's coverage sidecars (the history map), in a child process; each
+  // day's store comes later, when an analysis needs it.
+  if (air::bucket::enabled())
+    asio::co_spawn(io, [&app]() -> asio::awaitable<void> {
+      std::vector<std::string> argv{app.exe, "aircraft", "pull"};
+      std::function<void(std::string_view)> no_lines;
+      auto res = co_await net::run_child(argv, no_lines);
+      std::cout << "ADS-B bucket " << env("GEOLOC_AIRPLANE_BUCKET") << ": " << (res.exit_code == 0 ? std::string(res.out.substr(0, res.out.find('\n'))) : "coverage download failed (exit code " + std::to_string(res.exit_code) + ")") << std::endl;
+    }, asio::detached);
   std::cout << "geolocate-anything dashboard on http://" << host << ":" << port << std::endl;
   asio::signal_set stop(io, SIGINT, SIGTERM);
   stop.async_wait([&](auto, int) { io.stop(); });

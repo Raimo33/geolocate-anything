@@ -12,10 +12,12 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
 
+#include "air/bucket.hpp"
 #include "air/geodesy.hpp"
 #include "net/http.hpp"
 #include "store/store.hpp"
@@ -27,9 +29,13 @@ namespace geo::air {
 
 namespace {
 
+// v1: fixed-width columns (still read). v2 (written): quantised, delta-coded varint
+// columns and a zstd-compressed index at the end.
 constexpr char MAGIC[8] = {'G', 'L', 'A', 'D', 'S', 'B', '0', '1'};
+constexpr char MAGIC2[8] = {'G', 'L', 'A', 'D', 'S', 'B', '0', '2'};
+constexpr int STORE_LEVEL = 19;  // zstd level of stored blobs (decoding speed does not depend on it)
 constexpr const char* TYPES_URL = "https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/db/icao_aircraft_types.js";
-constexpr const char* AIRCRAFT_URL = "https://github.com/wiedehopf/tar1090-db/raw/csv/aircraft.csv.gz";
+constexpr const char* AIRCRAFT_URL = "https://raw.githubusercontent.com/wiedehopf/tar1090-db/csv/aircraft.csv.gz";
 
 // ---------------------------------------------------------------- gzip
 
@@ -229,6 +235,126 @@ Track track_of(const IndexEntry& e) {
   return tr;
 }
 
+// v2 blob: quantised to the source's own resolution (or finer), delta-coded, each value
+// zigzagged into 16 bits and split into a low-byte and a high-byte plane (larger values
+// escape to varints at the end), then zstd. Per fix:
+//   t       0.1 s from the track's first fix, delta (3 m at 60 m/s)
+//   lat/lon 1e-5 deg (1.1 m; ADS-B CPR positions resolve ~5 m), delta of delta
+//   alt     1 m, delta (ADS-B reports 25 ft steps)
+//   gs      0.1 kt, delta;  track 0.1 deg, delta wrapped;  vrate 1 ft/min, delta
+//   flags   byte: alt source (2 bits), leg start, gs/track/vrate missing
+// Every fix is kept. About 6 bytes a fix stored, against 18 for v1; on real days, byte
+// planes beat plain varints by 5% and a trained zstd dictionary or larger frames gain < 2%.
+void put_var(std::string& s, std::int64_t v) {
+  std::uint64_t u = (std::uint64_t(v) << 1) ^ std::uint64_t(v >> 63);
+  while (u >= 0x80) s += char(std::uint8_t(u) | 0x80), u >>= 7;
+  s += char(u);
+}
+std::int64_t get_var(std::string_view& s) {
+  std::uint64_t u = 0;
+  for (int shift = 0;; shift += 7) {
+    if (s.empty() || shift > 63) throw std::runtime_error("truncated track store");
+    const auto b = std::uint8_t(s.front());
+    s.remove_prefix(1);
+    u |= std::uint64_t(b & 0x7f) << shift;
+    if (!(b & 0x80)) break;
+  }
+  return std::int64_t(u >> 1) ^ -std::int64_t(u & 1);
+}
+constexpr std::uint8_t NO_GS = 8, NO_TRACK = 16, NO_VRATE = 32;
+constexpr int COLUMNS = 7;
+constexpr std::uint64_t ESCAPE = 0xffff;
+
+std::string fixes_blob2(const std::vector<Fix>& fx, double t0) {
+  const std::size_t n = fx.size();
+  std::vector<std::int64_t> v;
+  v.reserve(n * COLUMNS);
+  auto delta = [&](auto quant) {
+    std::int64_t prev = 0;
+    for (auto& f : fx) {
+      const std::int64_t q = quant(f, prev);
+      v.push_back(q - prev);
+      prev = q;
+    }
+  };
+  auto delta2 = [&](auto quant) {
+    std::int64_t prev = 0, pd = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+      const std::int64_t q = quant(fx[i]), d = q - prev;
+      v.push_back(i ? d - pd : q);
+      pd = i ? d : 0, prev = q;
+    }
+  };
+  // A missing value repeats the previous one (delta 0); its flag says it is missing.
+  auto q = [](float x, double scale, std::int64_t prev) { return std::isfinite(x) ? std::int64_t(std::llround(double(x) * scale)) : prev; };
+  delta([&](const Fix& f, std::int64_t) { return std::int64_t(std::llround((f.t - t0) * 10.0)); });
+  delta2([](const Fix& f) { return std::int64_t(std::llround(f.lat * 1e5)); });
+  delta2([](const Fix& f) { return std::int64_t(std::llround(f.lon * 1e5)); });
+  delta([&](const Fix& f, std::int64_t p) { return q(f.alt_m, 1.0, p); });
+  delta([&](const Fix& f, std::int64_t p) { return q(f.gs, 10.0 / KT, p); });
+  {
+    std::int64_t prev = 0;  // wrapped: 359.9 -> 0.1 is +2
+    for (auto& f : fx) {
+      const std::int64_t t = std::isfinite(f.track) ? (std::llround(double(f.track) * 10.0) % 3600 + 3600) % 3600 : prev;
+      v.push_back(((t - prev) % 3600 + 5400) % 3600 - 1800);
+      prev = t;
+    }
+  }
+  delta([&](const Fix& f, std::int64_t p) { return q(f.vrate, 1.0 / FPM, p); });
+  std::string out(v.size() * 2 + n, '\0'), esc;
+  for (std::size_t i = 0; i < v.size(); ++i) {
+    std::uint64_t u = (std::uint64_t(v[i]) << 1) ^ std::uint64_t(v[i] >> 63);
+    if (u >= ESCAPE) put_var(esc, v[i]), u = ESCAPE;
+    out[i] = char(u & 0xff), out[v.size() + i] = char(u >> 8);
+  }
+  for (std::size_t i = 0; i < n; ++i) {
+    const Fix& f = fx[i];
+    out[2 * v.size() + i] = char(std::uint8_t(f.alt_src) | (f.leg_start ? 4 : 0) | (std::isfinite(f.gs) ? 0 : NO_GS) |
+                                 (std::isfinite(f.track) ? 0 : NO_TRACK) | (std::isfinite(f.vrate) ? 0 : NO_VRATE));
+  }
+  return out + esc;
+}
+std::vector<Fix> fixes_of2(std::string_view raw, std::size_t n, double t0) {
+  const std::size_t m = n * COLUMNS;
+  if (raw.size() < 2 * m + n) throw std::runtime_error("truncated track store");
+  std::string_view esc = raw.substr(2 * m + n);
+  std::vector<std::int64_t> v(m);
+  for (std::size_t i = 0; i < m; ++i) {
+    const std::uint64_t u = std::uint64_t(std::uint8_t(raw[i])) | std::uint64_t(std::uint8_t(raw[m + i])) << 8;
+    v[i] = u == ESCAPE ? get_var(esc) : std::int64_t(u >> 1) ^ -std::int64_t(u & 1);
+  }
+  std::vector<Fix> fx(n);
+  const std::int64_t* c = v.data();
+  auto delta = [&](auto set) {
+    std::int64_t prev = 0;
+    for (std::size_t i = 0; i < n; ++i) set(fx[i], prev += c[i]);
+    c += n;
+  };
+  auto delta2 = [&](auto set) {
+    std::int64_t prev = 0, d = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (i) d += c[i], prev += d;
+      else prev = c[i];
+      set(fx[i], prev);
+    }
+    c += n;
+  };
+  delta([&](Fix& f, std::int64_t x) { f.t = t0 + double(x) / 10.0; });
+  delta2([](Fix& f, std::int64_t x) { f.lat = double(x) / 1e5; });
+  delta2([](Fix& f, std::int64_t x) { f.lon = double(x) / 1e5; });
+  delta([](Fix& f, std::int64_t x) { f.alt_m = float(x); });
+  delta([](Fix& f, std::int64_t x) { f.gs = float(double(x) * KT / 10.0); });
+  delta([](Fix& f, std::int64_t x) { f.track = float(double((x % 3600 + 3600) % 3600) / 10.0); });
+  delta([](Fix& f, std::int64_t x) { f.vrate = float(double(x) * FPM); });
+  for (std::size_t i = 0; i < n; ++i) {
+    const auto b = std::uint8_t(raw[2 * m + i]);
+    fx[i].alt_src = AltSource(b & 3), fx[i].leg_start = b & 4;
+    if (b & NO_GS) fx[i].gs = NAN;
+    if (b & NO_TRACK) fx[i].track = NAN;
+    if (b & NO_VRATE) fx[i].vrate = NAN;
+  }
+  return fx;
+}
 std::string zstd_compress(std::string_view raw, int level) {
   std::string out(ZSTD_compressBound(raw.size()), '\0');
   const std::size_t r = ZSTD_compress(out.data(), out.size(), raw.data(), raw.size(), level);
@@ -531,22 +657,46 @@ std::optional<Track> parse_trace(std::string_view text, const TypeDb& types, boo
   return parse_trace_impl(text, types, keep_jets, bbox, nullptr);
 }
 
-std::string encode_tracks(const std::vector<Track>& tracks) {
-  std::string head(MAGIC, 8), blobs;
-  put(head, std::uint32_t(0));
-  std::vector<IndexEntry> idx;
-  for (auto& tr : tracks) {
-    if (tr.fixes.empty()) continue;
-    auto e = index_of(tr);
-    auto c = zstd_compress(fixes_blob(tr), 3);
-    e.offset = blobs.size(), e.clen = std::uint32_t(c.size());
-    blobs += c;
-    idx.push_back(e);
+namespace {
+// A v2 store: MAGIC2, the blobs in index order, zstd(index), u32 count, u32 index size.
+// fixes(e) gives each entry's fixes (called in parallel); returns the bytes written.
+template <class Fixes>
+std::uint64_t write_store(std::ostream& of, std::vector<IndexEntry> idx, Fixes&& fixes) {
+  of.write(MAGIC2, 8);
+  std::uint64_t off = 0;
+  constexpr std::size_t BATCH = 2048;  // encoded in parallel, written in order
+  for (std::size_t s = 0; s < idx.size(); s += BATCH) {
+    const std::size_t m = std::min(BATCH, idx.size() - s);
+    std::vector<std::string> c(m);
+    parallel_for(m, [&](std::size_t i) {
+      auto& e = idx[s + i];
+      const std::vector<Fix> fx = fixes(e);
+      c[i] = zstd_compress(fixes_blob2(fx, e.t0), STORE_LEVEL);
+    });
+    for (std::size_t i = 0; i < m; ++i) {
+      idx[s + i].offset = off, idx[s + i].clen = std::uint32_t(c[i].size());
+      of.write(c[i].data(), std::streamsize(c[i].size()));
+      off += c[i].size();
+    }
   }
-  const auto n = std::uint32_t(idx.size());
-  std::memcpy(head.data() + 8, &n, 4);
-  for (auto& e : idx) put(head, e);
-  return head + blobs;
+  const auto zi = zstd_compress({reinterpret_cast<const char*>(idx.data()), idx.size() * sizeof(IndexEntry)}, STORE_LEVEL);
+  of.write(zi.data(), std::streamsize(zi.size()));
+  std::string tail;
+  put(tail, std::uint32_t(idx.size()));
+  put(tail, std::uint32_t(zi.size()));
+  of.write(tail.data(), std::streamsize(tail.size()));
+  return 8 + off + zi.size() + tail.size();
+}
+}  // namespace
+
+std::string encode_tracks(const std::vector<Track>& tracks) {
+  std::vector<IndexEntry> idx;
+  std::vector<const Track*> src;
+  for (auto& tr : tracks)
+    if (!tr.fixes.empty()) idx.push_back(index_of(tr)), idx.back().offset = src.size(), src.push_back(&tr);
+  std::ostringstream os;
+  write_store(os, idx, [&](const IndexEntry& e) { return src[e.offset]->fixes; });
+  return os.str();
 }
 
 namespace {
@@ -555,9 +705,23 @@ struct DayFile {
   MappedFile mf;
   std::vector<IndexEntry> idx;
   std::size_t data_off = 0;
+  int version = 0;
   explicit DayFile(const fs::path& p) : mf(p) {
     std::string_view v = mf.view();
+    if (v.size() >= 16 && std::memcmp(v.data(), MAGIC2, 8) == 0) {
+      version = 2;
+      std::string_view tail = v.substr(v.size() - 8);
+      const auto n = get<std::uint32_t>(tail), zlen = get<std::uint32_t>(tail);
+      if (std::size_t(zlen) + 16 > v.size()) throw std::runtime_error("truncated track store: " + p.string());
+      const std::string raw = zstd_decompress(v.substr(v.size() - 8 - zlen, zlen));
+      if (raw.size() != std::size_t(n) * sizeof(IndexEntry)) throw std::runtime_error("corrupt track store index: " + p.string());
+      idx.resize(n);
+      std::memcpy(idx.data(), raw.data(), raw.size());
+      data_off = 8;
+      return;
+    }
     if (v.size() < 12 || std::memcmp(v.data(), MAGIC, 8) != 0) throw std::runtime_error("not a track store: " + p.string());
+    version = 1;
     v.remove_prefix(8);
     const auto n = get<std::uint32_t>(v);
     if (v.size() < std::size_t(n) * sizeof(IndexEntry)) throw std::runtime_error("truncated track store: " + p.string());
@@ -567,7 +731,7 @@ struct DayFile {
   }
   std::vector<Fix> fixes(const IndexEntry& e) const {
     auto raw = zstd_decompress(mf.view().substr(data_off + e.offset, e.clen));
-    return fixes_of(raw, e.nfix, e.t0);
+    return version == 2 ? fixes_of2(raw, e.nfix, e.t0) : fixes_of(raw, e.nfix, e.t0);
   }
 };
 
@@ -578,9 +742,10 @@ namespace {
 // Aircraft-minutes per cell for one stored day, cached next to it.
 std::map<std::pair<int, int>, double> day_coverage(const std::string& day, bool force = false) {
   std::map<std::pair<int, int>, double> out;
-  const fs::path side = adsb_dir() / (day + ".cov");
+  const fs::path side = coverage_path(day);
+  std::error_code ec;
   if (!force)
-    if (auto txt = read_file(side); txt && fs::last_write_time(side) >= fs::last_write_time(day_path(day))) {
+    if (auto txt = read_file(side); txt && (!has_day(day) || fs::last_write_time(side, ec) >= fs::last_write_time(day_path(day), ec))) {
       for (auto& c : parse_json(*txt).as_object().at("cells").as_array()) {
         auto& a = c.as_array();
         out[{int(as_number(a[0])), int(as_number(a[1]))}] = as_number(a[2]);
@@ -607,20 +772,77 @@ std::map<std::pair<int, int>, double> day_coverage(const std::string& day, bool 
 
 }  // namespace
 
+fs::path coverage_path(const std::string& day) { return adsb_dir() / (day + ".cov"); }
+void ensure_coverage(const std::string& day) { day_coverage(day); }
+
+// Merged over every day with a sidecar; recomputed only when the sidecars change.
 std::string coverage_json() {
-  std::map<std::pair<int, int>, double> all;
-  json::array days;
-  for (auto& d : stored_days()) {
+  static std::mutex mu;
+  static std::string cached, cached_sig;
+  std::vector<std::string> days;
+  std::string sig;
+  std::error_code ec;
+  for (auto& e : fs::directory_iterator(adsb_dir(), ec)) {
+    const auto ext = e.path().extension();
+    if (ext == ".cov" || ext == ".trk") {
+      const std::string d = e.path().stem().string();
+      if (ext == ".trk" && fs::exists(coverage_path(d))) continue;
+      days.push_back(d);
+    }
+  }
+  std::sort(days.begin(), days.end());
+  for (auto& d : days) {
+    std::error_code e2;
+    sig += d + ":" + std::to_string(fs::last_write_time(coverage_path(d), e2).time_since_epoch().count()) + ";";
+  }
+  std::lock_guard lk(mu);
+  if (!cached.empty() && sig == cached_sig) return cached;
+  const int rows = int(180 / COVERAGE_DEG), cols = int(360 / COVERAGE_DEG);
+  std::vector<double> all(std::size_t(rows) * std::size_t(cols), 0.0);
+  json::array listed;
+  for (auto& d : days) {
     try {
-      for (auto& [k, v] : day_coverage(d)) all[k] += v;
-      days.push_back(json::value(d));
+      for (auto& [k, v] : day_coverage(d))
+        if (k.first >= 0 && k.first < rows && k.second >= 0 && k.second < cols) all[std::size_t(k.first) * std::size_t(cols) + std::size_t(k.second)] += v;
+      listed.push_back(json::value(d));
     } catch (const std::exception& e) {
       std::cerr << "coverage of " << d << ": " << e.what() << std::endl;
     }
   }
   json::array cells;
-  for (auto& [k, v] : all) cells.push_back(json::array{k.first * COVERAGE_DEG - 90, k.second * COVERAGE_DEG - 180, v});
-  return dump(json::object{{"cell_deg", COVERAGE_DEG}, {"days", days}, {"cells", cells}});
+  for (int a = 0; a < rows; ++a)
+    for (int b = 0; b < cols; ++b)
+      if (double v = all[std::size_t(a) * std::size_t(cols) + std::size_t(b)]; v > 0) cells.push_back(json::array{a * COVERAGE_DEG - 90, b * COVERAGE_DEG - 180, v});
+  cached = dump(json::object{{"cell_deg", COVERAGE_DEG}, {"days", listed}, {"cells", cells}});
+  cached_sig = sig;
+  return cached;
+}
+
+void mark_used(const std::string& day) { atomic_write(adsb_dir() / (day + ".used"), ""); }
+
+void evict_days() {
+  const int keep = std::atoi(env("GEOLOC_AIRPLANE_KEEP_DAYS").c_str());
+  if (keep <= 0) return;
+  auto used = [](const std::string& d) {
+    std::error_code ec;
+    auto t = fs::last_write_time(adsb_dir() / (d + ".used"), ec);
+    return ec ? fs::last_write_time(day_path(d), ec) : t;
+  };
+  auto days = stored_days();
+  std::sort(days.begin(), days.end(), [&](auto& a, auto& b) { return used(a) > used(b); });
+  for (std::size_t i = std::size_t(keep); i < days.size(); ++i)
+    for (const char* ext : {".trk", ".used"}) fs::remove(adsb_dir() / (days[i] + ext));
+}
+
+bool ensure_day(const std::string& day) {
+  if (has_day(day)) return true;
+  if (!bucket::enabled()) return false;
+  try {
+    return bucket::days().contains(day) && bucket::pull_day(day);
+  } catch (const std::exception& e) {
+    std::cerr << "ADS-B bucket: " << e.what() << std::endl;
+    return false;
+  }
 }
 
 std::vector<Track> decode_tracks(std::string_view bytes) {
@@ -693,7 +915,7 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
         }
         for (auto& x : samples) region.add(RegionOffsets::key(x.lat, x.lon, x.t), x.off_ft);
         auto e = index_of(*tr);
-        auto c = zstd_compress(fixes_blob(*tr), 3);
+        auto c = zstd_compress(fixes_blob(*tr), 1);  // a scratch copy: fast
         ++kept;
         std::lock_guard lk(out_mu);
         e.offset = spill_size, e.clen = std::uint32_t(c.size());
@@ -743,42 +965,71 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
       }
       st.release = "local:" + fs::path(o.parts.front()).filename().string();
     } else {
-      // The release for the day: prod first, then staging (not the MLAT-only one).
-      const std::string year = day.substr(0, 4), tagday = day.substr(0, 4) + "." + day.substr(5, 2) + "." + day.substr(8, 2);
-      const std::string repo = "https://api.github.com/repos/adsblol/globe_history_" + year + "/releases/tags/v" + tagday + "-planes-readsb-";
+      // The release for the day: prod first, then staging (not the MLAT-only one). Its
+      // assets are found by name (one .tar, or parts .tar.aa, .tar.ab, ...), without the
+      // GitHub API and its rate limit.
+      const std::string year = day.substr(0, 4), tag = "v" + day.substr(0, 4) + "." + day.substr(5, 2) + "." + day.substr(8, 2) + "-planes-readsb-";
       net::run_sync_void([&](net::asio::io_context& io) -> net::asio::awaitable<void> {
         net::Http http(io);
+        auto exists = [&](const std::string& url) -> net::asio::awaitable<bool> {
+          for (int attempt = 0;; ++attempt) {
+            auto r = co_await http.fetch({.url = url, .method = "HEAD"});
+            if (r.ok()) co_return true;
+            if (r.status == 404) co_return false;
+            if (attempt == 3) throw std::runtime_error("ADSB.lol release lookup failed: " + url + ": HTTP " + std::to_string(r.status) + " " + r.error);
+          }
+        };
         std::vector<std::string> urls;
         for (const char* pod : {"prod-0", "staging-0"}) {
-          auto r = co_await http.fetch({.url = repo + pod, .headers = {"Accept: application/vnd.github+json"}});
-          if (r.status == 404) continue;
-          if (!r.ok()) throw std::runtime_error("GitHub release lookup failed: HTTP " + std::to_string(r.status) + " " + r.error);
-          auto rel = parse_json(r.body);
-          if (const json::value* as = jget(rel, "assets"); as && as->is_array())
-            for (auto& a : as->as_array())
-              if (jstr(a, "name").find(".tar") != std::string::npos) urls.push_back(jstr(a, "browser_download_url"));
-          std::sort(urls.begin(), urls.end());
-          st.release = jstr(rel, "tag_name");
+          const std::string base = "https://github.com/adsblol/globe_history_" + year + "/releases/download/" + tag + pod + "/" + tag + pod + ".tar";
+          if (co_await exists(base)) {
+            urls.push_back(base);
+          } else {
+            for (char a = 'a'; a <= 'z' && urls.size() < 676; ++a) {
+              bool more = true;
+              for (char b = 'a'; b <= 'z'; ++b) {
+                const std::string u = base + "." + a + b;
+                if (!co_await exists(u)) {
+                  more = false;
+                  break;
+                }
+                urls.push_back(u);
+              }
+              if (!more) break;
+            }
+          }
+          st.release = tag + pod;
           if (!urls.empty()) break;
         }
         if (urls.empty()) throw std::runtime_error("no ADSB.lol release for " + day);
         for (auto& u : urls) {
           std::cerr << "downloading " << u << std::endl;
           std::uint64_t got = 0, next_report = 256ull << 20;
-          auto r = co_await http.fetch({.url = u,
-                                        .on_data =
-                                            [&](std::string_view b) {
-                                              tar.feed(b);
-                                              got += b.size();
-                                              if (got >= next_report) {
-                                                std::cerr << "  " << (got >> 20) << " MiB, " << kept.load() << " aircraft kept" << std::endl;
-                                                next_report += 256ull << 20;
-                                              }
-                                              return true;
-                                            },
-                                        .stall_timeout_s = 300,
-                                        .decompress = false});
-          if (!r.ok()) throw std::runtime_error("download failed: " + u + ": HTTP " + std::to_string(r.status) + " " + r.error);
+          // A dropped connection resumes where it stopped (a byte range): the tar reader
+          // just keeps reading.
+          for (int attempt = 0;; ++attempt) {
+            net::Request rq{.url = u,
+                            .on_data =
+                                [&](std::string_view b) {
+                                  tar.feed(b);
+                                  got += b.size();
+                                  if (got >= next_report) {
+                                    std::cerr << "  " << (got >> 20) << " MiB, " << kept.load() << " aircraft kept" << std::endl;
+                                    next_report += 256ull << 20;
+                                  }
+                                  return true;
+                                },
+                            .stall_timeout_s = 120,
+                            .decompress = false};
+            if (got) rq.range = {got, (std::uint64_t(1) << 50)};
+            auto r = co_await http.fetch(std::move(rq));
+            if (r.ok()) break;
+            if (attempt == 8 || (r.error.empty() && r.status >= 400 && r.status < 500 && r.status != 429 && r.status != 416))
+              throw std::runtime_error("download failed: " + u + ": HTTP " + std::to_string(r.status) + " " + r.error);
+            std::cerr << "  interrupted at " << (got >> 20) << " MiB (" << (r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error)
+                      << "), resuming" << std::endl;
+            co_await net::sleep_for(double(5 << std::min(attempt, 4)));
+          }
           st.bytes_in += got;
         }
       });
@@ -803,61 +1054,28 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
   MappedFile sp(spill_path);
   auto blob = [&](const IndexEntry& e) { return sp.view().substr(e.offset, e.clen); };
   std::sort(idx.begin(), idx.end(), [](const IndexEntry& a, const IndexEntry& b) { return a.t0 < b.t0; });
-  // Streamed out: header and a placeholder index, the blobs, then the real index.
   const fs::path out = day_path(day), tmp_out = out.string() + ".tmp";
   std::ofstream of(tmp_out, std::ios::binary | std::ios::trunc);
-  std::string head(MAGIC, 8);
-  put(head, std::uint32_t(idx.size()));
-  head.resize(head.size() + idx.size() * sizeof(IndexEntry), '\0');
-  of.write(head.data(), std::streamsize(head.size()));
-  std::uint64_t body = 0;
-  std::vector<IndexEntry> out_idx;
-  for (auto& e : idx) {
+  std::atomic<std::size_t> nfix{0}, b_track{0}, b_region{0}, b_raw{0};
+  st.bytes_out = write_store(of, idx, [&](const IndexEntry& e) {
     auto fx = fixes_of(zstd_decompress(blob(e)), e.nfix, e.t0);
-    st.fixes += fx.size();
-    bool changed = false;
+    nfix += fx.size();
     for (auto& f : fx) {
       if (f.alt_src == AltSource::BaroRaw)
-        if (auto off = region.at(f.lat, f.lon, f.t)) f.alt_m += *off * float(FT), f.alt_src = AltSource::BaroRegion, changed = true;
-      st.baro_track += f.alt_src == AltSource::BaroTrack;
-      st.baro_region += f.alt_src == AltSource::BaroRegion;
-      st.baro_raw += f.alt_src == AltSource::BaroRaw;
+        if (auto off = region.at(f.lat, f.lon, f.t)) f.alt_m += *off * float(FT), f.alt_src = AltSource::BaroRegion;
+      b_track += f.alt_src == AltSource::BaroTrack;
+      b_region += f.alt_src == AltSource::BaroRegion;
+      b_raw += f.alt_src == AltSource::BaroRaw;
     }
-    IndexEntry ne = e;
-    ne.offset = body;
-    std::string c;
-    if (changed) {
-      Track tr = track_of(e);
-      tr.fixes = std::move(fx);
-      c = zstd_compress(fixes_blob(tr), 3);
-    } else {
-      c = std::string(blob(e));
-    }
-    ne.clen = std::uint32_t(c.size());
-    of.write(c.data(), std::streamsize(c.size()));
-    body += c.size();
-    out_idx.push_back(ne);
-  }
-  of.seekp(12);
-  of.write(reinterpret_cast<const char*>(out_idx.data()), std::streamsize(out_idx.size() * sizeof(IndexEntry)));
+    return fx;
+  });
+  st.fixes = nfix, st.baro_track = b_track, st.baro_region = b_region, st.baro_raw = b_raw;
   of.close();
   if (!of) throw std::runtime_error("cannot write " + tmp_out.string());
   fs::rename(tmp_out, out);
   day_coverage(day, true);
-  atomic_write(adsb_dir() / (day + ".used"), "");
-  // A bounded store (a server's volume): keep the GEOLOC_AIRPLANE_KEEP_DAYS days used last.
-  if (const int keep = std::atoi(env("GEOLOC_AIRPLANE_KEEP_DAYS").c_str()); keep > 0) {
-    auto used = [](const std::string& d) {
-      std::error_code ec;
-      auto t = fs::last_write_time(adsb_dir() / (d + ".used"), ec);
-      return ec ? fs::last_write_time(day_path(d)) : t;
-    };
-    auto days = stored_days();
-    std::sort(days.begin(), days.end(), [&](auto& a, auto& b) { return used(a) > used(b); });
-    for (std::size_t i = std::size_t(keep); i < days.size(); ++i)
-      for (const char* ext : {".trk", ".cov", ".used"}) fs::remove(adsb_dir() / (days[i] + ext));
-  }
-  st.bytes_out = head.size() + body;
+  mark_used(day);
+  evict_days();
   sp = MappedFile();
   fs::remove(spill_path);
   return st;

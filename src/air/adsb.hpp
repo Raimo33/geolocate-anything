@@ -107,8 +107,19 @@ std::vector<std::string> stored_days();
 // had a fix in the cell) per 0.5 deg cell. One sidecar per day (<day>.cov), written at
 // ingest or computed on first use; `coverage_json` merges every stored day:
 // {cell_deg, days: [...], cells: [[south, west, aircraft_minutes], ...]}.
+// Days whose store left the volume keep their sidecar, so the map shows every day the
+// bucket holds.
 inline constexpr double COVERAGE_DEG = 0.5;
 std::string coverage_json();
+fs::path coverage_path(const std::string& day);  // <cache>/adsb/<day>.cov
+void ensure_coverage(const std::string& day);    // writes the sidecar if missing or stale
+
+// A bounded store (a server's volume): GEOLOC_AIRPLANE_KEEP_DAYS > 0 keeps only that many
+// days' stores, the ones used last (sidecars stay).
+void mark_used(const std::string& day);
+void evict_days();
+// The day is stored here, or was just downloaded from the ADS-B bucket.
+bool ensure_day(const std::string& day);
 
 struct IngestOptions {
   std::vector<std::string> parts;  // local tar parts in order; empty = download the release

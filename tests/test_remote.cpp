@@ -12,7 +12,10 @@
 #include <ranges>
 
 #include "helpers.hpp"
+#include "air/adsb.hpp"
+#include "air/bucket.hpp"
 #include "refs/remote.hpp"
+#include "util/files.hpp"
 
 using namespace geo;
 namespace fs = std::filesystem;
@@ -100,11 +103,15 @@ class Bucket : public test::TempStore {
     ::setenv("GEOLOC_GRID_ACCESS_KEY_ID", "x", 1);
     ::setenv("GEOLOC_GRID_SECRET_ACCESS_KEY", "x", 1);
     ::setenv("GEOLOC_S3_REGION", "us-east-1", 1);
+    // The ADS-B store's bucket: the fake server has one bucket, so the same name here.
+    ::setenv("GEOLOC_AIRPLANE_BUCKET", "refs-test", 1);
+    ::setenv("GEOLOC_AIRPLANE_ACCESS_KEY_ID", "x", 1);
+    ::setenv("GEOLOC_AIRPLANE_SECRET_ACCESS_KEY", "x", 1);
   }
   void TearDown() override {
     ::kill(pid_, SIGKILL);
     ::waitpid(pid_, nullptr, 0);
-    for (auto v : {"GEOLOC_GRID_BUCKET", "GEOLOC_S3_ENDPOINT_URL"}) ::unsetenv(v);
+    for (auto v : {"GEOLOC_GRID_BUCKET", "GEOLOC_S3_ENDPOINT_URL", "GEOLOC_AIRPLANE_BUCKET"}) ::unsetenv(v);
     TempStore::TearDown();
   }
   void month(const std::string& grid, const std::string& m, float v) {
@@ -168,3 +175,29 @@ TEST(Remote, ManifestMergeKeepsBothSidesNewestEntryWinning) {
   EXPECT_EQ(m.at("meta").at("a").as_int64(), 1);
 }
 
+
+TEST_F(Bucket, AdsbDaysGoToTheirBucketAndComeBackOnDemand) {
+  air::Track tr;
+  tr.icao = 0x3c6444, tr.type = "C172";
+  for (int i = 0; i < 20; ++i) {
+    air::Fix f;
+    f.t = 1767312000.0 + 3600 + i * 2.0, f.lat = 48.1 + i * 1e-4, f.lon = 11.5, f.alt_m = 900, f.gs = 50, f.track = 0, f.vrate = 0;
+    tr.fixes.push_back(f);
+  }
+  const std::string day = "2026-01-02";
+  fs::create_directories(air::adsb_dir());
+  atomic_write(air::day_path(day), air::encode_tracks({tr}));
+  EXPECT_EQ(air::bucket::push(), 1);
+  EXPECT_EQ(air::bucket::push(), 0);  // unchanged: nothing sent again
+  EXPECT_TRUE(air::bucket::days().contains(day));
+  // A volume that never held the day: the coverage map first, the store on first use.
+  fs::remove_all(air::adsb_dir());
+  EXPECT_EQ(air::bucket::pull_coverage(), 1);
+  EXPECT_FALSE(air::has_day(day));
+  EXPECT_EQ(parse_json(air::coverage_json()).at("days").as_array().size(), 1u);
+  EXPECT_TRUE(air::ensure_day(day));
+  auto back = air::load_tracks(1767312000.0 + 3600, 1767312000.0 + 3700);
+  ASSERT_EQ(back.size(), 1u);
+  EXPECT_EQ(back[0].fixes.size(), 20u);
+  EXPECT_FALSE(air::bucket::pull_day("2026-01-03"));
+}

@@ -6,6 +6,8 @@
 #include <iostream>
 #include <map>
 
+#include "air/adsb.hpp"
+#include "air/bucket.hpp"
 #include "refs/sources.hpp"
 #include "store/store.hpp"
 #include "util/text.hpp"
@@ -368,7 +370,7 @@ static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
   // A server can fetch the ADS-B day a recording needs (GEOLOC_AIRPLANE_FETCH, at most
   // GEOLOC_AIRPLANE_MAX_FETCH days per analysis, default 1).
   const bool fetch = o.aircraft_fetch || !env("GEOLOC_AIRPLANE_FETCH").empty();
-  if (o.aircraft == AM::Auto && air::stored_days().empty() && !fetch) return;
+  if (o.aircraft == AM::Auto && air::stored_days().empty() && !fetch && !air::bucket::enabled()) return;
   std::vector<air::Hypothesis> hyps;
   const bool located = rep.verdict && match::located(rep.verdict->level) && rep.verdict->candidate;
   if (located) {

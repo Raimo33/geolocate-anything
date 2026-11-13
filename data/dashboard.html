@@ -230,6 +230,11 @@ details.more[open] summary svg { transform: rotate(90deg); }
 .ovl input:checked + .sw::after { transform: translateX(12px); }
 .ovl b { display: block; font-size: 13px; font-weight: 600; }
 .ovl small { font-size: 11.5px; color: var(--text-muted); }
+.adsb-refetch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 20px 8px; font-size: 12px; color: var(--text-muted); }
+.adsb-refetch input, .adsb-refetch button { font: inherit; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); }
+.adsb-refetch button { cursor: pointer; }
+.adsb-refetch button:disabled { opacity: .55; cursor: default; }
+.adsb-refetch .err { color: var(--critical); }
 #map.adsb path.region { fill-opacity: .35; }
 .leaflet-adsb-pane canvas { opacity: .8; }
 /* fetch box: an idle call to action, or a live progress card while sources download */
@@ -424,6 +429,9 @@ details.more[open] summary svg { transform: rotate(90deg); }
     <input type="checkbox" id="adsb-on"><span class="sw"></span>
     <span><b>Aircraft history</b><small id="adsb-sum">overlay</small></span>
   </label>
+  <div class="adsb-refetch" title="Admin: build one UTC day of aircraft history again from ADSB.lol (about 4 GB read, a few minutes) and keep it in the ADS-B bucket">
+    <input type="date" id="adsb-day" aria-label="UTC day"><button id="adsb-go">Refetch day</button><span id="adsb-msg"></span>
+  </div>
   <div class="status-line" id="data-status"></div>
   <div class="scroll"><div class="gantt" id="gantt"></div>
     <div class="keys"><span><i style="background:linear-gradient(90deg,hsl(4 68% 47%) 0 50%,hsl(68 68% 47%) 80%,hsl(132 68% 47%))"></i>share of each month's seconds stored</span><span><i style="width:8px;height:8px;border-radius:50%;border:2px solid var(--text-muted)"></i>behind &gt; 1 week</span><span><i style="background:repeating-linear-gradient(45deg,transparent 0 3px,var(--text-muted) 3px 4px)"></i>none</span></div>
@@ -596,6 +604,47 @@ const adsbLoad = () => adsbReq || (adsbReq = fetch("api/adsb-coverage").then((r)
   return j;
 }).catch(() => { adsbReq = null; $("adsb-sum").textContent = "unavailable"; return null; }));
 adsbLoad();
+{
+  const y = new Date(Date.now() - 86400e3).toISOString().slice(0, 10);
+  $("adsb-day").max = y;
+  $("adsb-day").value = y;
+}
+async function refetchAdsb(day, token = savedToken()) {
+  const msg = $("adsb-msg"), go = $("adsb-go");
+  msg.className = "";
+  const r = await fetch("api/adsb-refetch", {
+    method: "POST", body: JSON.stringify({ day }),
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (r.status === 401) {
+    const t = prompt(token ? "Wrong admin token. Admin token:" : "Refetching needs the admin token:");
+    if (!t) return;
+    try { localStorage.setItem(TOKEN_KEY, t); } catch {}
+    return refetchAdsb(day, t);
+  }
+  const j = await readJson(r);
+  if (!r.ok) { msg.className = "err"; msg.textContent = j.error || r.statusText; return; }
+  go.disabled = true;
+  const t0 = Date.now();
+  try {
+    for (;;) {
+      await new Promise((res) => setTimeout(res, 3000));
+      const p = await fetch(`api/locate/${j.job}`), s = await readJson(p);
+      if (p.ok && (s.state === "queued" || s.state === "running")) {
+        msg.textContent = `${s.state === "queued" ? "waiting for another refetch" : "fetching " + day} · ${Math.round((Date.now() - t0) / 1000)} s`;
+        continue;
+      }
+      const d = s.days?.[0];
+      if (!p.ok || !d || d.state === "error") { msg.className = "err"; msg.textContent = (d && d.error) || s.error || "refetch failed"; break; }
+      msg.textContent = `${day}: ${d.aircraft ?? "?"} aircraft, ${d.mb_stored ?? "?"} MB${d.pushed ? " · in the bucket" : ""}`;
+      adsbReq = null;
+      await adsbLoad();
+      drawAdsb();
+      break;
+    }
+  } finally { go.disabled = false; }
+}
+$("adsb-go").addEventListener("click", () => $("adsb-day").value && refetchAdsb($("adsb-day").value));
 const hours = (m) => m < 60 ? `${Math.round(m)} aircraft-min` : `${(m / 60).toFixed(m < 600 ? 1 : 0)} aircraft-h`;
 async function drawAdsb() {
   if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }

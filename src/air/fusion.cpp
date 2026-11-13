@@ -6,6 +6,7 @@
 #include <set>
 
 #include "air/adsb.hpp"
+#include "air/bucket.hpp"
 
 #include "audio.hpp"
 #include "grids.hpp"
@@ -174,15 +175,21 @@ AircraftStage run_aircraft(const std::string& path, const std::vector<Hypothesis
   for (auto& h : hyps) {
     HypothesisResult hr{h, std::nullopt, {}};
     const double t0 = h.start_min - 600, t1 = h.start_max + spec.duration_s + 600;
-    // ADS-B days needed; fetched when allowed.
+    // ADS-B days needed: from the ADS-B bucket when it has them, else fetched from
+    // ADSB.lol when allowed (and then kept in the bucket).
     std::vector<std::string> missing;
     for (auto& d : days_of(h.start_min - 60, h.start_max + spec.duration_s + 60))
-      if (!has_day(d)) missing.push_back(d);
+      if (!ensure_day(d)) missing.push_back(d);
     for (auto it = missing.begin(); it != missing.end() && o.fetch && fetched < o.max_days;) {
       try {
         std::cerr << "fetching ADS-B history for " << *it << std::endl;
         ingest_day(*it, {});
         ++fetched;
+        if (bucket::enabled()) try {
+            bucket::push({*it});
+          } catch (const std::exception& e) {
+            std::cerr << "ADS-B bucket: " << e.what() << std::endl;
+          }
         it = missing.erase(it);
       } catch (const std::exception& e) {
         hr.note = "ADS-B history for " + *it + " unavailable: " + e.what();
