@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "air/fusion.hpp"
 #include "audio.hpp"
 #include "cuts.hpp"
 #include "enf/match.hpp"
@@ -47,6 +48,17 @@ struct Report {
   std::vector<cuts::Cut> cuts;
   std::vector<SegmentReport> segments;
   tzclue::Result tz;  // metadata clock vs. hum time: the device's UTC offset and what it leaves of the grid
+  std::optional<air::AircraftStage> aircraft;  // flyovers vs. ADS-B history (air/fusion.hpp)
+  // The hum re-searched around the aircraft's time, in the grid of the aircraft's place.
+  struct HumCheck {
+    std::string grid;
+    double aircraft_start = NAN;
+    double window_s = 0;
+    int rank = -1;  // of the hum candidate within 3 s of the aircraft's time (0 = best), -1 none
+    std::optional<match::Candidate> candidate;
+    std::string note;
+  };
+  std::vector<HumCheck> hum_checks;
 };
 
 struct AnalyzeOptions {
@@ -56,6 +68,10 @@ struct AnalyzeOptions {
   double frame_s = enf::DEFAULT_FRAME_S;
   int top_k = 30;
   bool split = true;
+  // Aircraft: auto runs when ADS-B history is stored (`geoloc aircraft fetch`).
+  enum class Aircraft { Auto, On, Off } aircraft = Aircraft::Auto;
+  std::optional<std::array<double, 4>> aircraft_box;  // west, south, east, north
+  bool aircraft_fetch = false;                         // download missing ADS-B days
 };
 
 Report analyze(const std::string& path, const AnalyzeOptions& o = {});

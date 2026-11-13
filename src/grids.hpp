@@ -3,6 +3,7 @@
 // their polygons (one feature per area) for "which grid holds this point at this time".
 #pragma once
 
+#include <array>
 #include <map>
 #include <optional>
 #include <string>
@@ -52,6 +53,9 @@ struct Placement {
   double distance_km = 0;
 };
 std::vector<Placement> grids_at(double lat, double lon, const std::string& day, double snap_km = 10.0);
+// West, south, east, north of the grid's areas in effect on `day` (nullopt if none).
+std::optional<std::array<double, 4>> grid_extent(const std::string& grid, const std::string& day);
+
 // grids_at for many days: computed once per distinct set of areas in effect.
 std::vector<std::vector<Placement>> grids_at_days(double lat, double lon, const std::vector<std::string>& days, double snap_km = 10.0);
 

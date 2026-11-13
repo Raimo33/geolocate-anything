@@ -356,6 +356,66 @@ std::vector<std::string> consistency_checks(const Report& rep) {
 
 }  // namespace
 
+// ---------------------------------------------------------------- aircraft
+
+// Time hypotheses from the hum for the aircraft search, then the hum re-searched around
+// the aircraft's answer when the hum alone did not locate.
+static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
+  using AM = AnalyzeOptions::Aircraft;
+  if (o.aircraft == AM::Off) return;
+  if (o.aircraft == AM::Auto && air::stored_days().empty() && !o.aircraft_fetch) return;
+  std::vector<air::Hypothesis> hyps;
+  const bool located = rep.verdict && match::located(rep.verdict->level) && rep.verdict->candidate;
+  if (located) {
+    const auto& c = *rep.verdict->candidate;
+    hyps.push_back({std::string("hum match (") + match::level_name(rep.verdict->level) + ")", c.grid, c.start_utc - 3, c.start_utc + 3, 1, {}});
+  } else {
+    std::vector<const match::Candidate*> cs;
+    for (auto& g : rep.results)
+      for (std::size_t i = 0; i < std::min<std::size_t>(3, g.candidates.size()); ++i)
+        if (g.candidates[i].consistent()) cs.push_back(&g.candidates[i]);
+    std::sort(cs.begin(), cs.end(), [](auto* a, auto* b) { return a->score > b->score; });
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, cs.size()); ++i)
+      hyps.push_back({"hum candidate #" + std::to_string(i + 1) + " (r = " + pyf(cs[i]->r, "%.2f") + ")", cs[i]->grid, cs[i]->start_utc - 3,
+                      cs[i]->start_utc + 3, 2, {}});
+    if (auto a = parse_time(o.from), b = parse_time(o.to); a && b) hyps.push_back({"time window", std::nullopt, double(*a), double(*b), 2, {}});
+  }
+  air::AircraftOptions ao;
+  if (o.aircraft_box) ao.box = air::Bbox{(*o.aircraft_box)[0], (*o.aircraft_box)[1], (*o.aircraft_box)[2], (*o.aircraft_box)[3]};
+  ao.fetch = o.aircraft_fetch;
+  if (hyps.empty()) {
+    air::AircraftStage st;
+    st.notes.push_back("no time to search at: no hum candidate and no --from/--to window");
+    rep.aircraft = std::move(st);
+    return;
+  }
+  rep.aircraft = air::run_aircraft(rep.path, hyps, ao);
+  const auto* r = rep.aircraft->best_result();
+  if (located || !r || r->level < air::AirLevel::Moderate || !rep.trace || r->candidates.empty()) return;
+  // The hum, where the aircraft put the recording: only +-6 h of one grid compete now.
+  const auto& c = r->candidates[0];
+  for (auto& p : grids::grids_at(c.lat, c.lon, grids::day_of(c.start_utc), 15.0)) {
+    if (!p.grid) continue;
+    Report::HumCheck hc;
+    hc.grid = *p.grid, hc.aircraft_start = c.start_utc, hc.window_s = 6 * 3600;
+    if (!grids::load_grids().get(*p.grid).tracked()) {
+      hc.note = "no reference data for this grid";
+      rep.hum_checks.push_back(hc);
+      continue;
+    }
+    match::SearchOptions so;
+    so.from = i64(c.start_utc - hc.window_s), so.to = i64(c.start_utc + hc.window_s), so.top_k = 30;
+    auto gr = match::search_grid(*rep.trace, *p.grid, so);
+    if (gr.n_lags == 0) hc.note = gr.note.empty() ? "no reference data around this time" : gr.note;
+    for (std::size_t i = 0; i < gr.candidates.size(); ++i)
+      if (std::abs(gr.candidates[i].start_utc - c.start_utc) <= 3.0) {
+        hc.rank = int(i), hc.candidate = gr.candidates[i];
+        break;
+      }
+    rep.hum_checks.push_back(hc);
+  }
+}
+
 // ---------------------------------------------------------------- analyze
 
 Report analyze(const std::string& path, const AnalyzeOptions& o) {
@@ -399,6 +459,7 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
     rep.segments.push_back({0, 0.0, rep.duration_s, std::move(w.m)});
     add_time_zone(rep);
     rep.consistency = consistency_checks(rep);
+    add_aircraft(rep, o);
     return rep;
   }
 
@@ -437,6 +498,8 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
                          " separately recorded segments, each located on its own. Metadata times describe the edited file, not the clips.");
   add_time_zone(rep);
   rep.consistency = consistency_checks(rep);
+  if (o.aircraft == AnalyzeOptions::Aircraft::On)
+    rep.warnings.push_back("aircraft search skipped: an edited file has no single clock for its flyovers");
   return rep;
 }
 
@@ -590,7 +653,24 @@ std::string render_text(const Report& rep) {
     L.emplace_back("");
     L.emplace_back("== Metadata vs. hum");
     for (auto& cl : rep.consistency) L.push_back("  " + cl);
+  }  if (rep.aircraft) {
+    L.emplace_back("");
+    std::string a = air::render_stage(*rep.aircraft);
+    while (!a.empty() && a.back() == '\n') a.pop_back();
+    L.push_back(a);
   }
+  for (auto& hc : rep.hum_checks) {
+    if (!hc.note.empty()) {
+      L.push_back("  Hum in " + hc.grid + " around the aircraft's time: " + hc.note);
+    } else if (hc.rank < 0) {
+      L.push_back("  Hum in " + hc.grid + ": no alignment within 3 s of the aircraft's time among the best 30 of +-6 h");
+    } else {
+      L.push_back("  Hum in " + hc.grid + ": the aircraft's time is alignment #" + std::to_string(hc.rank + 1) + " of +-6 h (r = " +
+                  pyf(hc.candidate->r, "%.3f") + ", " + pyf(hc.candidate->start_utc - hc.aircraft_start, "%+.1f") + " s)" +
+                  (hc.rank == 0 ? ": the two signals agree" : ""));
+    }
+  }
+
   if (!rep.tz.evidence.empty()) {
     L.emplace_back("");
     L.emplace_back("== Time zone (the device clock's UTC offset)");
@@ -803,6 +883,18 @@ static json::object report_json(const Report& rep, std::size_t max_points) {
   o["segments"] = std::move(segs);
   o["warnings"] = strings(rep.warnings);
   o["consistency"] = strings(rep.consistency);
+  if (rep.aircraft) o["aircraft"] = air::stage_json(*rep.aircraft);
+  if (!rep.hum_checks.empty()) {
+    json::array hcs;
+    for (auto& hc : rep.hum_checks)
+      hcs.push_back(json::object{{"grid", hc.grid},
+                                 {"aircraft_start", iso(hc.aircraft_start)},
+                                 {"window_s", hc.window_s},
+                                 {"rank", hc.rank},
+                                 {"candidate", cand_json(hc.candidate ? &*hc.candidate : nullptr)},
+                                 {"note", hc.note}});
+    o["hum_checks"] = hcs;
+  }
   o["timezone"] = tz_json(rep.tz);
   return o;
 }

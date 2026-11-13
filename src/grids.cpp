@@ -267,6 +267,18 @@ std::vector<Placement> grids_at(double lat, double lon, const std::string& day, 
   return dedupe(near);
 }
 
+std::optional<std::array<double, 4>> grid_extent(const std::string& grid, const std::string& day) {
+  const std::string d = normalize_day(day);
+  std::optional<std::array<double, 4>> box;
+  for (auto& s : load_shapes()) {
+    if (s.grid != grid || !s.active(d)) continue;
+    if (!box) box = std::array<double, 4>{s.bbox[0], s.bbox[1], s.bbox[2], s.bbox[3]};
+    else (*box)[0] = std::min((*box)[0], s.bbox[0]), (*box)[1] = std::min((*box)[1], s.bbox[1]), (*box)[2] = std::max((*box)[2], s.bbox[2]),
+         (*box)[3] = std::max((*box)[3], s.bbox[3]);
+  }
+  return box;
+}
+
 std::vector<std::vector<Placement>> grids_at_days(double lat, double lon, const std::vector<std::string>& days, double snap_km) {
   std::map<std::string, std::vector<Placement>> memo;
   std::vector<std::vector<Placement>> out;

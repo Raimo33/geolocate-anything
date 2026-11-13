@@ -5,6 +5,7 @@
 #include <set>
 #include <iostream>
 
+#include "air/commands.hpp"
 #include "enf/extract.hpp"
 #include "grids.hpp"
 #include "locate.hpp"
@@ -306,6 +307,12 @@ int main(int argc, char** argv) {
   loc->add_option("--nominal", loc_nominal, "force 50 or 60 Hz")->check(CLI::IsMember({50, 60}));
   loc->add_flag("--no-split", no_split, "treat the file as one recording: don't look for edit points");
   loc->add_option("--json", loc_json, "write a JSON report here");
+  std::string air_mode = "auto", air_bbox;
+  bool air_fetch = false;
+  loc->add_option("--aircraft", air_mode, "aircraft flyovers vs. ADS-B history: auto (when history is stored), on, off")
+      ->check(CLI::IsMember({"auto", "on", "off"}));
+  loc->add_option("--aircraft-bbox", air_bbox, "area for the aircraft search without a hum match: WEST,SOUTH,EAST,NORTH");
+  loc->add_flag("--aircraft-fetch", air_fetch, "download missing ADS-B days (~4 GB each)");
   loc->add_flag("--web-json", web_json, "print the dashboard's JSON on stdout (used by `serve`)")->group("");
   loc->add_option("--display-name", loc_display)->group("");
   loc->add_option("--size", loc_size)->group("");
@@ -316,6 +323,15 @@ int main(int argc, char** argv) {
     if (!date_to.empty()) o.to = date_to;
     if (loc_nominal) o.nominal = loc_nominal;
     o.split = !no_split;
+    o.aircraft = air_mode == "on" ? locate::AnalyzeOptions::Aircraft::On : air_mode == "off" ? locate::AnalyzeOptions::Aircraft::Off
+                                                                                           : locate::AnalyzeOptions::Aircraft::Auto;
+    o.aircraft_fetch = air_fetch;
+    if (!air_bbox.empty()) {
+      std::array<double, 4> b{};
+      if (std::sscanf(air_bbox.c_str(), "%lf,%lf,%lf,%lf", &b[0], &b[1], &b[2], &b[3]) != 4)
+        throw std::invalid_argument("--aircraft-bbox must be WEST,SOUTH,EAST,NORTH");
+      o.aircraft_box = b;
+    }
     rc = cmd_locate(loc_file, o, loc_json, web_json, loc_display, loc_size);
   });
 
@@ -381,6 +397,9 @@ int main(int argc, char** argv) {
   rim->add_option("--name", r_name, "the file's original name (for an uploaded temporary file)")->group("");
   rim->add_flag("--json", r_json, "print a JSON report")->group("");
   rim->callback([&] { rc = cmd_refs_import_aemo(r_files, r_grid, r_shift, r_name, r_json); });
+  // aircraft
+  air::register_commands(app, rc);
+
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {

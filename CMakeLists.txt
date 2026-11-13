@@ -80,6 +80,14 @@ add_library(geoloc_core STATIC
   src/grids.cpp
   src/tzclue.cpp
   src/locate.cpp
+  src/air/doppler.cpp
+  src/air/spectrogram.cpp
+  src/air/events.cpp
+  src/air/adsb.cpp
+  src/air/terrain.cpp
+  src/air/search.cpp
+  src/air/fusion.cpp
+  src/air/commands.cpp
   src/net/http.cpp
   src/net/zip.cpp
   src/net/spawn.cpp
@@ -160,7 +168,7 @@ if(GTest_FOUND)
   add_executable(geoloc_tests
     tests/test_main.cpp tests/synth.cpp tests/test_store.cpp tests/test_match.cpp tests/test_extract.cpp
     tests/test_cuts.cpp tests/test_grids.cpp tests/test_sources.cpp tests/test_pipeline.cpp
-    tests/test_remote.cpp tests/test_web.cpp tests/test_tzclue.cpp tests/test_seismic.cpp)
+    tests/test_remote.cpp tests/test_web.cpp tests/test_tzclue.cpp tests/test_seismic.cpp tests/test_aircraft.cpp)
   target_compile_options(geoloc_tests PRIVATE ${GEOLOC_WARN} -O2 -march=${GEOLOC_ARCH})
   target_link_libraries(geoloc_tests PRIVATE geoloc_core GTest::gtest)
   target_compile_definitions(geoloc_tests PRIVATE GEOLOC_BIN="$<TARGET_FILE:geoloc>")

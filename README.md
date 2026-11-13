@@ -4,12 +4,13 @@ An OSINT tool that estimates **where and when an audio or video recording was ma
 background sounds that people rarely notice. Four signals are planned:
 
 1. [**Grid hum**](#1-grid-hum-enf): the mains frequency gives the power grid and the exact UTC second.
-2. [**Aircraft**](#2-aircraft)
+2. [**Aircraft**](#2-aircraft): Doppler curves of passing propeller aircraft, matched against
+   ADS-B history, give the place to within a few hundred metres and the start time.
 3. [**Church bells**](#3-church-bells)
 4. [**Emergency sirens**](#4-emergency-sirens)
 
-Only the grid hum is implemented. The other three narrow the location down within a grid once
-the hum has fixed the time.
+The grid hum and aircraft are implemented, and each feeds the other: the hum's second
+lets one flyover locate, and the aircraft's place and time let a faint hum confirm.
 
 ---
 
@@ -216,6 +217,56 @@ station. Details: [`docs/grids/seismic.md#western-australia-and-darwin-seismic_s
 
 ## 2. Aircraft
 
+Documentation: [`docs/aircraft/architecture.md`](docs/aircraft/architecture.md)
+
+### Principle
+
+A propeller aircraft drones at a steady pitch (its blade-pass frequency, ~60–200 Hz, and
+harmonics). Flying past a microphone, the pitch falls as it goes by: how far it falls
+gives the speed, how fast it falls the closest distance, and the details of the curve
+the exact path. ADS-B history records where every equipped aircraft was, second by
+second. A place that heard the right aircraft at the right distance and speed, at the
+right moments, and heard no other between, is where the recording was made. The tones
+are far below what anyone notices, pass through walls and survive phone codecs.
+
+### Method
+
+1. **Flyovers.** A whitened spectrogram of the recording is scanned with Doppler
+   templates (every speed, closest distance and rest frequency at once); each detection
+   is measured as ranges of CPA time, speed, slant distance and rest frequency, with its
+   harmonics.
+2. **Flight history.** ADSB.lol's daily archives (~4 GB/day) are streamed into a compact
+   store of the day's non-jet tracks (`geoloc aircraft fetch DAY`), with altitudes put
+   above the WGS84 ellipsoid; ground heights from the Copernicus 90 m DEM.
+3. **Corridors.** For each flyover, the 200 m cells along every flight of the right speed
+   at the right slant distance.
+4. **One clock.** Cells where the flights' closest approaches are heard as far apart as
+   the flyovers in the recording; subsets of the flyovers are tried, so clutter (boats,
+   cars) stays unmatched.
+5. **Silence.** Cells that would have heard another aircraft pass closer, unheard,
+   between the flyovers are dropped.
+6. **Exact curves.** At the survivors each flight's curve is modelled from its real
+   trajectory (emission time solved for every instant) and scored on the spectrogram's
+   ridges, with one start time for all flyovers; the best place per combination of
+   flights is refined to 20 m.
+
+On the recording from the video that inspired this ([colsto](https://www.youtube.com/watch?v=UytYrhYLOKI)),
+searching Long Island for the whole of 2026-09-08 returns the reference place to within
+160 m, the same two aircraft and the start second, in a minute.
+
+### With the hum
+
+`geoloc locate` runs the aircraft stage when ADS-B history is stored: a located hum gives
+the second and the grid, where one flyover suffices; a weak hum gives candidate seconds,
+one of which two flyovers can confirm; without hum, the aircraft's place and time
+narrow the hum search to ± 6 h of one grid.
+
+### Limits
+
+- Only aircraft with ADS-B in ADSB.lol's coverage; jets are excluded.
+- A time window is needed: a day for two or more flyovers, seconds for one.
+- Edited files (cuts) are not searched; wind and refraction are not modelled.
+
 ## 3. Church bells
 
 ## 4. Emergency sirens
@@ -240,8 +291,13 @@ geoloc serve                                    # web dashboard on http://127.0.
 | `geoloc refs list` | Stored references and sources |
 | `geoloc refs push \| pull` | Sync the store with the bucket |
 | `geoloc refs import-aemo FILE...` | Import AEMO's hand-downloaded yearly workbooks |
+| `geoloc locate FILE [--aircraft auto\|on\|off] [--aircraft-bbox W,S,E,N] [--aircraft-fetch]` | Hum and aircraft together |
+| `geoloc aircraft events FILE [--json out]` | Flyovers in a recording (CPA time, speed, slant distance, rest frequency) |
+| `geoloc aircraft fetch DAY... [--parts A B] [--bbox W,S,E,N]` | Store a day of ADSB.lol history (non-jets) |
+| `geoloc aircraft locate FILE --from ISO --to ISO --bbox W,S,E,N [--min-events N] [--json out]` | Aircraft-only search |
 
-Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`).
+Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`); ADS-B
+days under `adsb/` there (~0.7 GB each), DEM tiles under `dem/`.
 
 Environment (all optional): `GEOLOC_BUCKET` with `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` mirrors the store to an S3 bucket (and
