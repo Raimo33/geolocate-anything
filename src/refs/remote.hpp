@@ -2,10 +2,10 @@
 // bucket is the shared copy; the local store is the working copy the search reads.
 // Files are compared by MD5 against the object's ETag (uploads are single-part), so
 // nothing is sent twice. Requests are signed by libcurl (AWS SigV4) and run in
-// parallel on the event loop. Configured from the environment when GEOLOC_BUCKET is set:
+// parallel on the event loop. Configured from the environment when GEOLOC_GRID_BUCKET is set:
 //
-//   GEOLOC_BUCKET, AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-//   AWS_DEFAULT_REGION (default "auto"). Objects live under refs/.
+//   GEOLOC_GRID_BUCKET, GEOLOC_S3_ENDPOINT_URL, GEOLOC_GRID_ACCESS_KEY_ID, GEOLOC_GRID_SECRET_ACCESS_KEY,
+//   GEOLOC_S3_REGION (default "auto"). Objects live under refs/.
 #pragma once
 
 #include <functional>

@@ -845,8 +845,8 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
   fs::rename(tmp_out, out);
   day_coverage(day, true);
   atomic_write(adsb_dir() / (day + ".used"), "");
-  // A bounded store (a server's volume): keep the GEOLOC_ADSB_KEEP_DAYS days used last.
-  if (const int keep = std::atoi(env("GEOLOC_ADSB_KEEP_DAYS").c_str()); keep > 0) {
+  // A bounded store (a server's volume): keep the GEOLOC_AIRPLANE_KEEP_DAYS days used last.
+  if (const int keep = std::atoi(env("GEOLOC_AIRPLANE_KEEP_DAYS").c_str()); keep > 0) {
     auto used = [](const std::string& d) {
       std::error_code ec;
       auto t = fs::last_write_time(adsb_dir() / (d + ".used"), ec);

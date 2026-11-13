@@ -95,16 +95,16 @@ class Bucket : public test::TempStore {
     const int port = acc.local_endpoint().port();
     pid_ = ::fork();
     if (pid_ == 0) fake_s3(acc);
-    ::setenv("GEOLOC_BUCKET", "refs-test", 1);
-    ::setenv("AWS_ENDPOINT_URL", ("http://127.0.0.1:" + std::to_string(port)).c_str(), 1);
-    ::setenv("AWS_ACCESS_KEY_ID", "x", 1);
-    ::setenv("AWS_SECRET_ACCESS_KEY", "x", 1);
-    ::setenv("AWS_DEFAULT_REGION", "us-east-1", 1);
+    ::setenv("GEOLOC_GRID_BUCKET", "refs-test", 1);
+    ::setenv("GEOLOC_S3_ENDPOINT_URL", ("http://127.0.0.1:" + std::to_string(port)).c_str(), 1);
+    ::setenv("GEOLOC_GRID_ACCESS_KEY_ID", "x", 1);
+    ::setenv("GEOLOC_GRID_SECRET_ACCESS_KEY", "x", 1);
+    ::setenv("GEOLOC_S3_REGION", "us-east-1", 1);
   }
   void TearDown() override {
     ::kill(pid_, SIGKILL);
     ::waitpid(pid_, nullptr, 0);
-    for (auto v : {"GEOLOC_BUCKET", "AWS_ENDPOINT_URL"}) ::unsetenv(v);
+    for (auto v : {"GEOLOC_GRID_BUCKET", "GEOLOC_S3_ENDPOINT_URL"}) ::unsetenv(v);
     TempStore::TearDown();
   }
   void month(const std::string& grid, const std::string& m, float v) {

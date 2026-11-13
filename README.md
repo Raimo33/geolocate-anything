@@ -308,8 +308,8 @@ geoloc serve                                    # web dashboard on http://127.0.
 Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`); ADS-B
 days under `adsb/` there (~0.7 GB each), DEM tiles under `dem/`.
 
-Environment (all optional): `GEOLOC_BUCKET` with `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` mirrors the store to an S3 bucket (and
+Environment (all optional): `GEOLOC_GRID_BUCKET` with `GEOLOC_S3_ENDPOINT_URL`, `GEOLOC_GRID_ACCESS_KEY_ID`,
+`GEOLOC_GRID_SECRET_ACCESS_KEY`, `GEOLOC_S3_REGION` mirrors the store to an S3 bucket (and
 `refs refresh` uploads to it); `GEOLOC_ADMIN_TOKEN` gates the dashboard's Refresh and
 import; `GEOLOC_EARTHSCOPE_REFRESH_TOKEN` enables the EarthScope seismic refreshes (`seismic_east`,
 `seismic_ips`; the anonymous EarthScope quota cannot backfill); `GEOLOC_US_SEISMIC_REFRESH`
@@ -319,9 +319,9 @@ sources (`seismic_cn_*`, `seismic_swis`, `seismic_darwin`, `seismic_ips_shake`),
 are backfilled on a separate machine and pushed (`refs push`), never refreshed by the
 dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_GEOFON_REFRESH` enables `seismic_estonia` (a closed period, ~4 GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
 2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);
-`GEOLOC_AIRCRAFT_FETCH` lets `locate` (and so the dashboard) download the ADSB.lol day a
-recording needs (~4 GB streamed, ~0.7 GB kept; at most `GEOLOC_AIRCRAFT_MAX_FETCH` days per
-analysis, default 1), and `GEOLOC_ADSB_KEEP_DAYS` keeps only that many days, the ones used
+`GEOLOC_AIRPLANE_FETCH` lets `locate` (and so the dashboard) download the ADSB.lol day a
+recording needs (~4 GB streamed, ~0.7 GB kept; at most `GEOLOC_AIRPLANE_MAX_FETCH` days per
+analysis, default 1), and `GEOLOC_AIRPLANE_KEEP_DAYS` keeps only that many days, the ones used
 last (for a bounded volume); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
 cores, 4 to 8), and how many threads `locate` uses (default: every core): a search
 spreads its blocks over them (~30 MB each), long compressed audio is decoded and

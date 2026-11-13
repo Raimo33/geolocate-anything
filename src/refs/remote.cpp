@@ -19,7 +19,7 @@ namespace geo::refs::remote {
 
 namespace asio = boost::asio;
 
-bool enabled() { return !env("GEOLOC_BUCKET").empty(); }
+bool enabled() { return !env("GEOLOC_GRID_BUCKET").empty(); }
 
 namespace {
 
@@ -30,16 +30,16 @@ struct Config {
 
 Config config() {
   Config c;
-  c.bucket = env("GEOLOC_BUCKET");
-  if (c.bucket.empty()) throw std::runtime_error("GEOLOC_BUCKET is not set");
-  c.endpoint = env("AWS_ENDPOINT_URL", "https://s3.amazonaws.com");
+  c.bucket = env("GEOLOC_GRID_BUCKET");
+  if (c.bucket.empty()) throw std::runtime_error("GEOLOC_GRID_BUCKET is not set");
+  c.endpoint = env("GEOLOC_S3_ENDPOINT_URL", "https://s3.amazonaws.com");
   auto p = c.endpoint.find("://");
   c.scheme = p == std::string::npos ? "https" : c.endpoint.substr(0, p);
   c.host = p == std::string::npos ? c.endpoint : c.endpoint.substr(p + 3);
   while (!c.host.empty() && c.host.back() == '/') c.host.pop_back();
-  c.region = env("AWS_DEFAULT_REGION", "auto");
-  c.key = env("AWS_ACCESS_KEY_ID");
-  c.secret = env("AWS_SECRET_ACCESS_KEY");
+  c.region = env("GEOLOC_S3_REGION", "auto");
+  c.key = env("GEOLOC_GRID_ACCESS_KEY_ID");
+  c.secret = env("GEOLOC_GRID_SECRET_ACCESS_KEY");
   c.prefix = "refs/";
   // Virtual-hosted addressing (bucket.host), except where the host cannot carry a
   // subdomain: an IP address or localhost (a local S3 server).

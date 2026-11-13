@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Dashboard image (geoloc serve). Reference data lives in a bucket (GEOLOC_BUCKET): the
+# Dashboard image (geoloc serve). Reference data lives in a bucket (GEOLOC_GRID_BUCKET): the
 # container downloads it on start and uploads what its refreshes fetch.
 #
 # Railway rebuilds every layer from scratch, so the slow parts live in BuildKit cache

@@ -269,7 +269,7 @@ int cmd_refs_refresh(std::vector<std::string> grids, bool progress) {
 
 int cmd_refs_sync(bool is_push, const std::string& grid, bool progress) {
   if (!refs::remote::enabled()) {
-    std::cerr << "no bucket configured: set GEOLOC_BUCKET (and AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)" << std::endl;
+    std::cerr << "no bucket configured: set GEOLOC_GRID_BUCKET (and GEOLOC_S3_ENDPOINT_URL, GEOLOC_GRID_ACCESS_KEY_ID, GEOLOC_GRID_SECRET_ACCESS_KEY)" << std::endl;
     if (progress) say(json::object{{"error", "no bucket configured"}});
     return 1;
   }

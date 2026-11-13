@@ -264,7 +264,7 @@ class Refresher {
       error = std::string("cannot start the download: ") + e.what();
     }
     store::invalidate_caches();
-    std::string bucket = env("GEOLOC_BUCKET");
+    std::string bucket = env("GEOLOC_GRID_BUCKET");
     if (res.exit_code == 0) {
       std::cout << "bucket " << bucket << ": " << files << " file(s) downloaded" << std::endl;
       pull_ = finished(State::Done, std::to_string(files) + " file(s) downloaded from the bucket");

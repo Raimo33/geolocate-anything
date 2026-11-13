@@ -1074,7 +1074,7 @@ are not throttled). So:
 
       GEOLOC_SHAKE_REFRESH=1 geoloc refs refresh --grid china_southern   # every month not stored yet
       GEOLOC_SHAKE_REFRESH=1 geoloc refs fetch seismic_cn_north --grid china_north_central --months 2024-01
-      geoloc refs push                                                   # with the bucket's GEOLOC_BUCKET / AWS_* set
+      geoloc refs push                                                   # with the bucket's GEOLOC_GRID_* / GEOLOC_S3_* set
 
 - **Threads.** The process is single-threaded by design; the trackers are the
   exception. Each downloaded chunk is decoded on a thread of its own
