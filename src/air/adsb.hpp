@@ -107,7 +107,8 @@ std::vector<std::string> stored_days();
 // How much history covers each place: aircraft-minutes (distinct minutes an aircraft
 // had a fix in the cell) per 0.5 deg cell. One sidecar per day (<day>.cov), written at
 // ingest or computed on first use; `coverage_json` merges every stored day:
-// {cell_deg, days: [...], cells: [[south, west, aircraft_minutes], ...]}.
+// {cell_deg, days: [...], cells: [[south, west, aircraft_minutes], ...],
+//  regions: [{id, name, bbox?: [w, s, e, n], minutes: [per listed day]}, ...]}.
 // Days whose store left the volume keep their sidecar, so the map shows every day the
 // bucket holds.
 inline constexpr double COVERAGE_DEG = 0.5;

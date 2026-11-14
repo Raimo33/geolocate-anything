@@ -682,16 +682,28 @@ asio::awaitable<Response> handle_refresh(App& app, const http::request<http::str
   co_return json_resp(req, http::status::ok, app.refresher.snapshot());
 }
 
-// POST /api/adsb-refetch {"day": "YYYY-MM-DD"} (admin): the day built again from ADSB.lol
-// (`aircraft fetch --force`, ~4 GB read, a few minutes) and, with an ADS-B bucket,
-// uploaded there. A job the page polls (GET /api/locate/<id>); its result lists the day.
+// POST /api/adsb-refetch (admin), a job the page polls (GET /api/locate/<id>) whose result
+// lists the days. {"latest": true}: every one of the last ADSB_LATEST_DAYS UTC days not yet
+// stored (here or in the ADS-B bucket) fetched from ADSB.lol (~4 GB read, a few minutes
+// each). {"day": "YYYY-MM-DD"}: that day built again (`aircraft fetch --force`). With an
+// ADS-B bucket, fetched days are uploaded there.
+constexpr int ADSB_LATEST_DAYS = 7;
 Response handle_adsb_refetch(App& app, const http::request<http::string_body>& m) {
   const Req req = Req::of(m);
-  if (!admin_ok(app, m[http::field::authorization])) return json_resp(req, http::status::unauthorized, error_obj("refetching needs the admin token"));
+  if (!admin_ok(app, m[http::field::authorization])) return json_resp(req, http::status::unauthorized, error_obj("fetching needs the admin token"));
   std::string day;
+  bool latest = false;
   try {
-    day = jstr(parse_json(m.body()), "day");
+    const auto body = parse_json(m.body());
+    latest = jbool(body, "latest");
+    if (!latest) day = jstr(body, "day");
   } catch (...) {
+  }
+  if (latest) {
+    const i64 today = floor_div(i64(now_seconds()), 86400);
+    std::vector<std::string> argv{app.exe, "aircraft", "fetch", iso_date((today - ADSB_LATEST_DAYS) * 86400) + ".." + iso_date((today - 1) * 86400), "--json"};
+    if (air::bucket::enabled()) argv.push_back("--push");
+    return start_job(app, req, std::move(argv), std::nullopt, &app.adsb_fetches);
   }
   const auto t = parse_iso_utc(day);
   if (day.size() != 10 || !t || *t > now_seconds()) return json_resp(req, http::status::bad_request, error_obj("expected a past UTC day, YYYY-MM-DD"));

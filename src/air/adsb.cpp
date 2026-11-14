@@ -4,6 +4,7 @@
 #include <zstd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
@@ -1021,11 +1022,33 @@ std::string coverage_json() {
   if (!cached.empty() && sig == cached_sig) return cached;
   const int rows = int(180 / COVERAGE_DEG), cols = int(360 / COVERAGE_DEG);
   std::vector<double> all(std::size_t(rows) * std::size_t(cols), 0.0);
+  // Per-region aircraft-minutes for each listed day (the dashboard's region lanes). A cell
+  // belongs to the first region whose box holds its centre; the rest is "Oceans & other".
+  struct Region { const char* id; const char* name; double w, s, e, n; };
+  static constexpr Region REGIONS[] = {
+      {"europe", "Europe", -25, 35, 45, 72},       {"middle_east", "Middle East", 34, 12, 63, 38},
+      {"north_america", "North America", -170, 7, -50, 84}, {"south_america", "South America", -92, -56, -30, 7},
+      {"africa", "Africa", -20, -36, 52, 37},      {"oceania", "Oceania", 110, -50, 180, -10},
+      {"asia", "Asia", 45, -11, 180, 82},
+  };
+  constexpr std::size_t NREG = std::size(REGIONS) + 1;
+  auto region_of = [](int row, int col) {
+    const double lat = row * COVERAGE_DEG - 90 + COVERAGE_DEG / 2, lon = col * COVERAGE_DEG - 180 + COVERAGE_DEG / 2;
+    for (std::size_t i = 0; i < std::size(REGIONS); ++i)
+      if (lon >= REGIONS[i].w && lon < REGIONS[i].e && lat >= REGIONS[i].s && lat < REGIONS[i].n) return i;
+    return std::size(REGIONS);
+  };
+  std::vector<json::array> per_region(NREG);
   json::array listed;
   for (auto& d : days) {
     try {
+      std::array<double, NREG> sums{};
       for (auto& [k, v] : day_coverage(d))
-        if (k.first >= 0 && k.first < rows && k.second >= 0 && k.second < cols) all[std::size_t(k.first) * std::size_t(cols) + std::size_t(k.second)] += v;
+        if (k.first >= 0 && k.first < rows && k.second >= 0 && k.second < cols) {
+          all[std::size_t(k.first) * std::size_t(cols) + std::size_t(k.second)] += v;
+          sums[region_of(k.first, k.second)] += v;
+        }
+      for (std::size_t i = 0; i < NREG; ++i) per_region[i].push_back(json::value(sums[i]));
       listed.push_back(json::value(d));
     } catch (const std::exception& e) {
       std::cerr << "coverage of " << d << ": " << e.what() << std::endl;
@@ -1035,7 +1058,18 @@ std::string coverage_json() {
   for (int a = 0; a < rows; ++a)
     for (int b = 0; b < cols; ++b)
       if (double v = all[std::size_t(a) * std::size_t(cols) + std::size_t(b)]; v > 0) cells.push_back(json::array{a * COVERAGE_DEG - 90, b * COVERAGE_DEG - 180, v});
-  cached = dump(json::object{{"cell_deg", COVERAGE_DEG}, {"days", listed}, {"cells", cells}});
+  json::array regions;
+  for (std::size_t i = 0; i < NREG; ++i) {
+    json::object r{{"minutes", per_region[i]}};
+    if (i < std::size(REGIONS)) {
+      const auto& g = REGIONS[i];
+      r["id"] = g.id, r["name"] = g.name, r["bbox"] = json::array{g.w, g.s, g.e, g.n};
+    } else {
+      r["id"] = "other", r["name"] = "Oceans & other";
+    }
+    regions.push_back(r);
+  }
+  cached = dump(json::object{{"cell_deg", COVERAGE_DEG}, {"days", listed}, {"cells", cells}, {"regions", regions}});
   cached_sig = sig;
   return cached;
 }

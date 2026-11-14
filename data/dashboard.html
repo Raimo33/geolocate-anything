@@ -225,11 +225,10 @@ details.more[open] summary svg { transform: rotate(90deg); }
 .air-cov { margin: 0 20px 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
 .air-cov b { display: block; font-size: 13px; font-weight: 600; }
 .air-cov small { font-size: 11.5px; color: var(--text-muted); }
-.adsb-refetch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 20px 8px; font-size: 12px; color: var(--text-muted); }
-.adsb-refetch input, .adsb-refetch button { font: inherit; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); }
-.adsb-refetch button { cursor: pointer; }
-.adsb-refetch button:disabled { opacity: .55; cursor: default; }
-.adsb-refetch .err { color: var(--critical); }
+.gantt .lane .day { position: absolute; top: 2px; bottom: 2px; min-width: 2px; border-radius: 2px; }
+.gantt .tot { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+#adsb-gantt .row { grid-template-columns: 140px 1fr 46px; }
+#adsb-gantt .yrs { margin-right: 54px; white-space: nowrap; }
 .leaflet-adsb-pane canvas { opacity: .8; }
 /* fetch box: an idle call to action, or a live progress card while sources download */
 .fetch { margin: 12px 20px 8px; }
@@ -421,8 +420,10 @@ details.more[open] summary svg { transform: rotate(90deg); }
   <div class="tabs" id="data-tabs" style="margin-top:12px"><button type="button" data-tab="grids">Grids</button><button type="button" data-tab="aircraft">Aircraft</button></div>
   <div class="tab-air hidden" id="data-air">
     <div class="air-cov" title="How much aircraft (ADS-B) history is stored per 0.5° cell, for the aircraft search"><b>Aircraft history</b><small id="adsb-sum">loading…</small></div>
-    <div class="adsb-refetch" title="Admin: build one UTC day of aircraft history again from ADSB.lol (about 4 GB read, a few minutes) and keep it in the ADS-B bucket">
-      <input type="date" id="adsb-day" aria-label="UTC day"><button id="adsb-go">Refetch day</button><span id="adsb-msg"></span>
+    <div class="fetch" id="adsb-fetch"></div>
+    <div class="status-line" id="adsb-status"></div>
+    <div class="scroll"><div class="gantt" id="adsb-gantt"></div>
+      <div class="keys"><span><i style="background:linear-gradient(90deg,hsl(4 68% 47%),hsl(68 68% 47%),hsl(132 68% 47%))"></i>aircraft-minutes that day, vs the region's busiest day</span><span><i style="background:var(--surface-2);border:1px solid var(--border)"></i>day not stored</span></div>
     </div>
   </div>
   <div class="tab-grids" id="data-grids" style="display:contents">
@@ -609,50 +610,137 @@ setDataTab(DATA_TAB);
 const adsbLoad = () => adsbReq || (adsbReq = fetch("api/adsb-coverage").then((r) => r.json()).then((j) => {
   ADSB = j;
   $("adsb-sum").textContent = j.days.length ? `${j.days.length} day${j.days.length > 1 ? "s" : ""} stored · ${j.days[0]}${j.days.length > 1 ? " … " + j.days[j.days.length - 1] : ""}` : "no ADS-B days stored";
+  renderAdsbGantt(j);
   return j;
 }).catch(() => { adsbReq = null; $("adsb-sum").textContent = "unavailable"; return null; }));
 adsbLoad();
-{
-  const y = new Date(Date.now() - 86400e3).toISOString().slice(0, 10);
-  $("adsb-day").max = y;
-  $("adsb-day").value = y;
+// "Fetch the latest data": every one of the last 7 UTC days not stored yet, fetched from
+// ADSB.lol (~4 GB read, a few minutes per day) as one server job. Its id survives a reload.
+const ADSB_JOB_KEY = "geoloc-adsb-job";
+let ADSB_FETCH = null;  // {state: running|done|error, t0, text}
+function renderAdsbFetch() {
+  const box = $("adsb-fetch"), f = ADSB_FETCH;
+  if (f?.state === "running") {
+    const s = Math.round((Date.now() - f.t0) / 1000);
+    box.innerHTML = `<div class="fetch-card"><div class="top"><b>Fetching aircraft history</b><span>${s < 120 ? s + " s" : Math.round(s / 60) + " min"}</span></div>
+      <div class="pbar"><i style="width:100%"></i></div><div class="sub">${esc(f.text || "Reading ADSB.lol's daily releases, a few minutes per missing day")}</div></div>`;
+    return;
+  }
+  if (f) {
+    box.innerHTML = `<div class="fetch-card ${f.state === "done" ? "ok" : ""}"><div class="top"><b>${f.state === "done" ? "Up to date" : "Fetch failed"}</b></div>
+      <div class="pbar"><i style="width:100%"></i></div><div class="sub" title="${esc(f.text)}">${esc(f.text)}</div></div>`;
+    return;
+  }
+  box.innerHTML = `<button class="go" id="adsb-go"><span class="ic">${icon("download")}</span>
+    <div><b>Fetch the latest data</b><span>Download the last 7 days ADSB.lol published that are not stored yet</span></div></button>`;
 }
-async function refetchAdsb(day, token = savedToken()) {
-  const msg = $("adsb-msg"), go = $("adsb-go");
-  msg.className = "";
+function adsbSummary(days) {
+  const n = (st) => days.filter((d) => d.state === st).length;
+  const unpublished = (d) => d.state === "error" && /no ADSB\.lol release/.test(d.error || "");
+  const got = n("fetched"), err = days.filter((d) => d.state === "error" && !unpublished(d)), later = days.filter(unpublished);
+  const parts = [got ? `${got} day${got === 1 ? "" : "s"} fetched` : "nothing new to fetch", n("stored") + n("in bucket") ? `${n("stored") + n("in bucket")} already stored` : "",
+    later.length ? `${later.map((d) => d.day).join(", ")} not published yet` : ""];
+  if (err.length) parts.push(`${err.length} failed (${err.map((d) => `${d.day}: ${d.error}`).join("; ")})`);
+  return { ok: !err.length || got > 0, text: parts.filter(Boolean).join(" · ") };
+}
+async function pollAdsbJob(job) {
+  ADSB_FETCH = { state: "running", t0: ADSB_FETCH?.t0 || Date.now() };
+  try { localStorage.setItem(ADSB_JOB_KEY, job); } catch {}
+  const tick = setInterval(renderAdsbFetch, 1000);
+  renderAdsbFetch();
+  try {
+    for (;;) {
+      const p = await fetch(`api/locate/${job}`), s = await readJson(p);
+      if (p.ok && (s.state === "queued" || s.state === "running")) {
+        if (s.elapsed_s != null) ADSB_FETCH.t0 = Date.now() - s.elapsed_s * 1000;
+        ADSB_FETCH.text = s.state === "queued" ? "Waiting for another aircraft fetch to finish" : "";
+        await new Promise((res) => setTimeout(res, 3000));
+        continue;
+      }
+      if (!p.ok || !s.days) { ADSB_FETCH = { state: "error", text: s.error || "fetch failed" }; break; }
+      const sum = adsbSummary(s.days);
+      ADSB_FETCH = { state: sum.ok ? "done" : "error", text: sum.text };
+      adsbReq = null;
+      await adsbLoad();
+      if (DATA_TAB === "aircraft") drawAdsb();
+      break;
+    }
+  } finally {
+    clearInterval(tick);
+    try { localStorage.removeItem(ADSB_JOB_KEY); } catch {}
+    renderAdsbFetch();
+    setTimeout(() => { if (ADSB_FETCH?.state !== "running") { ADSB_FETCH = null; renderAdsbFetch(); } }, ADSB_FETCH?.state === "error" ? 20000 : 8000);
+  }
+}
+async function fetchLatestAdsb(token = savedToken()) {
   const r = await fetch("api/adsb-refetch", {
-    method: "POST", body: JSON.stringify({ day }),
+    method: "POST", body: JSON.stringify({ latest: true }),
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
   if (r.status === 401) {
-    const t = prompt(token ? "Wrong admin token. Admin token:" : "Refetching needs the admin token:");
+    const t = prompt(token ? "Wrong admin token. Admin token:" : "Fetching needs the admin token:");
     if (!t) return;
     try { localStorage.setItem(TOKEN_KEY, t); } catch {}
-    return refetchAdsb(day, t);
+    return fetchLatestAdsb(t);
   }
-  const j = await readJson(r);
-  if (!r.ok) { msg.className = "err"; msg.textContent = j.error || r.statusText; return; }
-  go.disabled = true;
-  const t0 = Date.now();
-  try {
-    for (;;) {
-      await new Promise((res) => setTimeout(res, 3000));
-      const p = await fetch(`api/locate/${j.job}`), s = await readJson(p);
-      if (p.ok && (s.state === "queued" || s.state === "running")) {
-        msg.textContent = `${s.state === "queued" ? "waiting for another refetch" : "fetching " + day} · ${Math.round((Date.now() - t0) / 1000)} s`;
-        continue;
-      }
-      const d = s.days?.[0];
-      if (!p.ok || !d || d.state === "error") { msg.className = "err"; msg.textContent = (d && d.error) || s.error || "refetch failed"; break; }
-      msg.textContent = `${day}: ${d.aircraft ?? "?"} aircraft, ${d.mb_stored ?? "?"} MB${d.pushed ? " · in the bucket" : ""}`;
-      adsbReq = null;
-      await adsbLoad();
-      drawAdsb();
-      break;
-    }
-  } finally { go.disabled = false; }
+  const j = await readJson(r), st = $("adsb-status");
+  if (!r.ok) { st.className = "status-line err"; st.textContent = j.error || r.statusText; return; }
+  st.className = "status-line";
+  st.textContent = "";
+  ADSB_FETCH = null;
+  pollAdsbJob(j.job);
 }
-$("adsb-go").addEventListener("click", () => $("adsb-day").value && refetchAdsb($("adsb-day").value));
+$("adsb-fetch").addEventListener("click", (ev) => { if (ev.target.closest("#adsb-go")) fetchLatestAdsb(); });
+renderAdsbFetch();
+try { const j = localStorage.getItem(ADSB_JOB_KEY); if (j) pollAdsbJob(j); } catch {}
+
+// Region lanes, like the grids' Gantt: one row per region, one segment per stored day,
+// coloured by that day's aircraft-minutes against the region's busiest day.
+let AIR_HOVER = null, airHoverLayer = null;
+function renderAdsbGantt(j) {
+  const regions = (j?.regions || []).map((r) => ({ ...r, total: r.minutes.reduce((a, b) => a + b, 0) })).filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
+  if (!j?.days.length || !regions.length) { $("adsb-gantt").innerHTML = ""; return; }
+  const dn = (d) => Date.parse(d + "T00:00:00Z") / DAY_MS;
+  const first = dn(j.days[0]), last = Math.max(dn(j.days[j.days.length - 1]), Math.floor(Date.now() / DAY_MS) - 1);
+  const span = Math.max(1, last - first + 1), pct = (d) => ((d - first) / span) * 100;
+  // Ticks: month starts over long spans, weeks over short ones.
+  const ticks = [];
+  if (span > 70) {
+    for (let d = new Date(first * DAY_MS); ; ) {
+      d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+      const n = d.getTime() / DAY_MS;
+      if (n > last) break;
+      ticks.push([n, d.toLocaleString("en", { month: "short", timeZone: "UTC" }) + (d.getUTCMonth() ? "" : " " + d.getUTCFullYear())]);
+    }
+  } else for (let n = first + 7; n <= last; n += 7) ticks.push([n, dayStr(n * DAY_MS).slice(5)]);
+  const every = Math.ceil(ticks.length / 4), w = 100 / span;
+  $("adsb-gantt").innerHTML = `<div class="yrs">${ticks.filter((_, i) => i % every === 0).map(([n, t]) => `<span style="left:${pct(n)}%">${t}</span>`).join("")}</div>` +
+    regions.map((r) => {
+      const best = Math.max(...r.minutes);
+      const segs = j.days.map((d, i) => r.minutes[i] > 0 ? `<i class="day" title="${d}: ${esc(hours(r.minutes[i]))}" style="left:${pct(dn(d))}%;width:${w}%;background:${covColor(r.minutes[i] / best)}"></i>` : "").join("");
+      const daysWith = r.minutes.filter((m) => m > 0).length;
+      return `<div class="row" data-region="${esc(r.id)}" title="${esc(`${r.name}: ${hours(r.total)} over ${daysWith} day${daysWith === 1 ? "" : "s"}, busiest day ${hours(best)}`)}">
+        <div class="name">${esc(r.name)}</div>
+        <div class="lane">${ticks.map(([n]) => `<i class="yr" style="left:${pct(n)}%"></i>`).join("")}${segs}</div>
+        <div class="tot">${esc(hours(r.total).replace(" aircraft-", " "))}</div></div>`;
+    }).join("");
+}
+$("adsb-gantt").addEventListener("mouseover", (ev) => {
+  const row = ev.target.closest("[data-region]");
+  if (!row || row.dataset.region === AIR_HOVER) return;
+  AIR_HOVER = row.dataset.region;
+  if (airHoverLayer) { airHoverLayer.remove(); airHoverLayer = null; }
+  const r = ADSB?.regions?.find((x) => x.id === AIR_HOVER);
+  if (!r?.bbox) return;
+  const [w, s, e, n] = r.bbox;
+  airHoverLayer = L.rectangle([[s, w], [n, e]], { color: css("--series-1"), weight: 2, dashArray: "6 5", fill: false, interactive: false }).addTo(map);
+  frame(airHoverLayer.getBounds());
+});
+$("adsb-gantt").addEventListener("mouseleave", () => {
+  AIR_HOVER = null;
+  if (airHoverLayer) { airHoverLayer.remove(); airHoverLayer = null; }
+  map.flyTo([30, 10], innerWidth > 800 ? 2.5 : 1.5, { duration: 0.8 });
+});
 const hours = (m) => m < 60 ? `${Math.round(m)} aircraft-min` : `${(m / 60).toFixed(m < 600 ? 1 : 0)} aircraft-h`;
 async function drawAdsb() {
   if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }

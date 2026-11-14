@@ -326,8 +326,8 @@ dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017
 (endpoint and region from `GEOLOC_S3_*`) is the ADS-B store's own bucket: days are built
 offline (`aircraft fetch FIRST..LAST --push --drop`) and kept there; a server pulls every
 day's coverage sidecar on start (the history map) and streams a day's store into its
-volume when an analysis first needs it; the dashboard's **Refetch day** (admin) rebuilds a
-day from ADSB.lol and uploads it; `GEOLOC_AIRPLANE_FETCH` lets `locate` (and so the
+volume when an analysis first needs it; the dashboard's aircraft tab **Fetch the latest data** (admin)
+fetches whichever of the last 7 UTC days are missing from ADSB.lol and uploads them; `GEOLOC_AIRPLANE_FETCH` lets `locate` (and so the
 dashboard) download an ADSB.lol day the bucket lacks (~4 GB streamed, ~50 MB kept, then
 uploaded to the bucket; at most `GEOLOC_AIRPLANE_MAX_FETCH` days per analysis, default 1), and
 `GEOLOC_AIRPLANE_KEEP_DAYS` keeps only that many days' stores, the ones used last (for a
