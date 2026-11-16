@@ -222,9 +222,6 @@ details.more[open] summary svg { transform: rotate(90deg); }
 .data-head h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
 .data-head .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 /* aircraft tab */
-.air-cov { margin: 0 20px 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
-.air-cov b { display: block; font-size: 13px; font-weight: 600; }
-.air-cov small { font-size: 11.5px; color: var(--text-muted); }
 .gantt .lane .day { position: absolute; top: 2px; bottom: 2px; min-width: 2px; border-radius: 2px; }
 .gantt .tot { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 #adsb-gantt .row { grid-template-columns: 140px 1fr 46px; }
@@ -416,10 +413,10 @@ details.more[open] summary svg { transform: rotate(90deg); }
   <div class="data-head">
     <h2>Reference history</h2>
     <div class="sub" id="data-sum"></div>
+    <div class="sub hidden" id="adsb-sum" title="How much aircraft (ADS-B) history is stored per 0.5° cell, for the aircraft search">loading…</div>
   </div>
   <div class="tabs" id="data-tabs" style="margin-top:12px"><button type="button" data-tab="grids">Grids</button><button type="button" data-tab="aircraft">Aircraft</button></div>
   <div class="tab-air hidden" id="data-air">
-    <div class="air-cov" title="How much aircraft (ADS-B) history is stored per 0.5° cell, for the aircraft search"><b>Aircraft history</b><small id="adsb-sum">loading…</small></div>
     <div class="fetch" id="adsb-fetch"></div>
     <div class="status-line" id="adsb-status"></div>
     <div class="scroll"><div class="gantt" id="adsb-gantt"></div>
@@ -603,13 +600,15 @@ function setDataTab(t) {
   for (const b of $("data-tabs").querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === t);
   $("data-grids").style.display = t === "grids" ? "contents" : "none";
   $("data-air").classList.toggle("hidden", t !== "aircraft");
+  $("data-sum").classList.toggle("hidden", t !== "grids");
+  $("adsb-sum").classList.toggle("hidden", t !== "aircraft");
   if (!$("v-data").classList.contains("hidden")) showCoverage();
 }
 $("data-tabs").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-tab]"); if (b && b.dataset.tab !== DATA_TAB) setDataTab(b.dataset.tab); });
 setDataTab(DATA_TAB);
 const adsbLoad = () => adsbReq || (adsbReq = fetch("api/adsb-coverage").then((r) => r.json()).then((j) => {
   ADSB = j;
-  $("adsb-sum").textContent = j.days.length ? `${j.days.length} day${j.days.length > 1 ? "s" : ""} stored · ${j.days[0]}${j.days.length > 1 ? " … " + j.days[j.days.length - 1] : ""}` : "no ADS-B days stored";
+  $("adsb-sum").textContent = j.days.length ? `Aircraft history · ${j.days.length} day${j.days.length > 1 ? "s" : ""} stored · ${j.days[0]}${j.days.length > 1 ? " … " + j.days[j.days.length - 1] : ""}` : "no ADS-B days stored";
   renderAdsbGantt(j);
   return j;
 }).catch(() => { adsbReq = null; $("adsb-sum").textContent = "unavailable"; return null; }));
