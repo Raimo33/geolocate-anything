@@ -108,6 +108,62 @@ sources (France at 10 s) are interpolated, and finer ones (Finland at 10 Hz) are
 averaged down. Each source records its timestamp convention, because not all of them
 are UTC.
 
+## Stored sources: periods and corrections
+
+What the reference store holds per grid, and the defects found (most by cross-checking
+overlapping sources second by second) and corrected on import. All series are stored at
+1 s resolution, rounded to 1 mHz.
+
+| Grid | Source | Period | Description and construction | Defects and corrections |
+|---|---|---|---|---|
+| Great Britain | `neso` | 2014 → last month | NESO open data, 1 s. | 2014 files use day-first dates in UK local time; 2025-04..10 files are stamped in BST for the whole month. Both converted to UTC. Values are in mHz with a misleading median; rescaled. |
+| Great Britain | `osf_pgf` | 2014–2020 | OSF power-grid-frequency collection; verified identical to NESO. | As `neso`. |
+| Great Britain | `pmu_zenodo` | 2025-04-28 → 2025-12 | PMU in London, 1 s, UTC. | — |
+| Continental Europe | `osf_pgf` | 2011-07 → 2020-09 | Germany at 1 s; gaps filled from France at 10 s. | Germany is in German wall-clock time (converted to UTC). France swaps day and month for days 1–12 and runs 17 s early against Germany; both repaired before gap filling. |
+| Continental Europe | `open_enf` | 2010, 2011-02..06, 2012-01 | Open-ENF German database (2010: 10 mHz steps); German TSOs' 4 s series for 2011–12. | 2010 recorder had no GPS time: timing only good to about ±2 s. |
+| Continental Europe | `netztransparenz` | 2012-02 → 2022-06 | German TSOs, 1 s; 2022-03 from TransnetBW's monthly file. | German wall-clock time and 2 s late against GPS-timed recorders; both corrected. |
+| Continental Europe | `energy_charts` | 2022-05 → today | Fraunhofer ISE, Freiburg, 1 s, UTC. | — |
+| Nordic | `fingrid` | 2015 → last month | Fingrid open data, 10 Hz averaged to 1 s. | Published in Finnish local time, not UTC; the autumn DST day logs one hour twice. Converted to UTC. |
+| Nordic | `osf_pgf` | 2015–2020 | The same Fingrid files via OSF. | As `fingrid`. |
+| Ireland | `osf_ireland` | 2014-05 → 2017 (gaps) | GPS-timed recorder near Dublin, 10 Hz averaged to 1 s. | — |
+| Ireland | `kit_zenodo` | 2021-12 | KIT/Jülich recorder release on Zenodo. | — |
+| Ireland | `eirgrid` | mid-2020 → today | EirGrid Smart Grid Dashboard, 5 s at 10 mHz. | Irish wall-clock time and 2 s late; corrected. |
+| Australia (NEM, Tasmania) | `aemo_causer_pays` | 2011-01 → 2017-03 | AEMO FCAS data, 4 s. | — |
+| Australia (NEM, Tasmania) | `aemo_annual` | 2010–2025 | AEMO yearly frequency workbooks, 4 s, imported with `refs import-aemo`. | — |
+| Australia (NEM, Tasmania) | `aemo_fpp` | 2024-12 → today | AEMO regional frequency, 4 s; mainland from NSW, gaps from QLD. | — |
+| Western Australia (SWIS) | `seismic_perth_basin` | 2017-01-25 → 2017-06 | Reconstructed from the 50 Hz hum seen directly in the Perth Basin Array (250 samples/s, GPS-timed, at AusPass); only seconds on which two sites agree. See [seismic.md](seismic.md#western-australia-and-darwin-seismic_swis-seismic_perth_basin-seismic_darwin). | A temporary deployment: nothing after June. |
+| Western Australia (SWIS) | `seismic_swis` | 2022-02 → today; one station in 2020 | Reconstructed from the 50 Hz hum in Raspberry Shake geophones between Toodyay, Perth and Harvey, decoded as for China. | 11–19 mHz per station against a direct line; seconds beyond ±60 mHz are empty. Not GPS-timed (NTP). |
+| Darwin–Katherine | `seismic_darwin` | spells of 2018-10 → 2022-07, 2024-10 → today | Same method: one address in Darwin. | One station: nothing to confirm it. |
+| US Western | `seismic_west` | 2001-09 → 2018-12, 2025-08 → today | Reconstructed from the 60 Hz hum in GPS-timed seismometers from Vancouver Island to New Mexico; only seconds on which two sites agree. See [seismic.md](seismic.md#us-western-seismic_west). | Until about 2010 from 100 samples/s analogue stations (within about a second of the GPS-timed ones). Nothing before 2001-09. |
+| US Western | `aeso` | 2019-01 → 2025-07 | Alberta system frequency, 2 s. | UTC column runs 3 s late; corrected. |
+| US Western | `osf_edr` | 2019-05, 2024-01..11 | KIT GPS recorders in Colorado and Salt Lake City. | — |
+| US Western | `lbnl_upmu` | 2015-10-01 → 12 | LBNL micro-PMU in Berkeley, derived from the 120 Hz voltage angle. | — |
+| US Eastern | `seismic_east` | 2001-09 → today | Reconstructed from the 60 Hz hum in GPS-timed seismometers; 3–5 stations fused. See [seismic.md](seismic.md#us-eastern-seismic_east). | Weak months refetched 2026-11-12 after a rescreen: 2012 now 67% (was 1%), 2013 91% (was 41%), 2010–2011 97–98%, other years 92–100% except 2001 (76%). Still under 90%: 2001-09/12, 2002-01..05, 2003-09, 2004-11, 2010-03, 2011-12..2012-06, 2012-10..2013-01, 2013-03, 2015-04/05, 2016-02, 2017-10, 2021-10/11 ([details](seismic.md#rescreen-of-20102013-2026-11-12)). |
+| US Eastern | `osf_edr` | 2023-06/07 | KIT recorder in Florida. | Not GPS-locked: drifts −4 s to −13 s against `seismic_east`, so it ranks below it. |
+| ERCOT (Texas) | `seismic_ercot` | 2014-02 → today; days of 2009 | Reconstructed from the 60 Hz hum in GPS-timed seismometers in Dallas–Fort Worth and the Permian Basin; from 2015-02 only seconds on which two sites agree. See [seismic.md](seismic.md#ercot-seismic_ercot). | No station for 2012–2013. One site (Azle) carries most of 2014. Excursions beyond ±250 mHz (2021-02-15) are not tracked. |
+| ERCOT (Texas) | `ercot_etts` | ~150 days of 2011–12 | ERCOT EMS system frequency, 4 s. | — |
+| ERCOT (Texas) | `osf_edr` | 2019-05 | KIT recorders at two Texas sites. | — |
+| India | `grid_india_pmu` | 2020-12-20 → 2023-08-20 | Grid-India PMU at Balipara, Assam, 1 s. | Logged in IST; converted to UTC. |
+| Southern Africa | `pmu_zenodo` | 2025-04-28 → 2025-12 | PMU in Stellenbosch, 1 s. | — |
+| Japan East (50 Hz) | `dtu_tokyo` | 42 days of 2017, 317 of 2020 | DTU recorder in Tokyo, 0.5 s (CC BY-NC-ND). | — |
+| IPS/UPS (Russia & neighbours) | `seismic_ips` | 2022-10 → today (gaps) | Reconstructed from the 50 Hz hum in GPS-timed strong-motion stations in Azerbaijan, Kazakhstan and Kyrgyzstan; only seconds on which two sites agree. See [seismic.md](seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips). | Stations hum only part of the time: 98% of 2025-04 is stored, 74% of 2023-01, 6–15% of the months of 2023-03..2024-10 tried. Sites can differ by up to ~2 s. |
+| IPS/UPS (Russia & neighbours) | `seismic_estonia` | 2015-05 → 2025-02-08 (gaps) | Reconstructed from the 50 Hz hum in the Estonian national seismic network (250 samples/s, GPS-timed) while the Baltic states were part of IPS/UPS; only seconds on which two sites agree. See [seismic.md](seismic.md#ipsups-from-estonia-seismic_estonia). | Sites hum by spells, mostly at night: 4–25% of the seconds of the months checked. ~1 s ahead of KIT's recorders (r 0.95–0.996, 2.7 mHz RMS against Kaunas/Tallinn 2025). |
+| IPS/UPS (Russia & neighbours) | `seismic_ips_shake` | 2021 → today (gaps) | Raspberry Shakes in Kazakhstan, Kyrgyzstan, Uzbekistan, Georgia, Belarus and Estonia (until 2025-02-08), the 50 Hz line on Nyquist decoded as for China, fused with `seismic_ips`'s stations, which decide where they hum. Fills what `seismic_ips` and `seismic_estonia` leave. See [seismic.md](seismic.md#ipsups-from-raspberry-shakes-seismic_ips_shake). | Shakes good to ~5 mHz (r 0.945 median against the direct stations). In night probes 2023–2024 go from ~24% of seconds to 96–98%; nothing added before 2021. Backfilled offline. |
+| IPS/UPS (Russia & neighbours) | `osf_edr` | 2019-03-29 → 2019-04-17, 2019-04-30 → 05-11 | KIT recorders in Tallinn and St. Petersburg, 1 s. | Tallinn's clock ran 19–55 s late, growing by 1–2 s a day: corrected against `seismic_estonia`, its first four days dropped. |
+| China Southern (with Hong Kong, Macau) | `seismic_cn_south` | 2019-07 → 2025-12 (gaps; 326 days in all) | Reconstructed from the 50 Hz hum in Raspberry Shake geophones in Hong Kong and Guangdong. The line sits on the Nyquist frequency of their 100 samples/s; a decoder recovers the signed deviation. See [seismic.md](seismic.md#china-seismic_cn_). | 4–7 mHz per station, against 1 mHz for a direct line. Stations hum by spells. |
+| China North & Central | `seismic_cn_north` | 2019-08 → 2020-03, 2022-09 → 2024-09 (483 days) | Same method: Beijing, Tianjin, Ordos. | As above; often one station alone. |
+| China East | `seismic_cn_east` | 2023-10 → 2024-04 (53 days) | Same method: Xuzhou, Xiamen. | As above. |
+| China Southwest | `seismic_cn_southwest` | 2021-03 → 2024-02 (504 days) | Same method: one station in Chongqing. | One station: nothing to confirm it. |
+| Brazil (SIN) | `seismic_brazil` | 2004-02 → 2008-08 (gaps) | Reconstructed from the 60 Hz hum in one University of São Paulo seismic recorder. See [seismic.md](seismic.md#brazil-seismic_brazil). | One site; clock within ~2 s of UTC, not GPS-timed. |
+| IPS/UPS and Baltic island mode | `osf_baltic` | 2025-01-23 → 2025-02-09 | KIT recorders in Kaunas and Tallinn, 0.1 s; covers the whole Baltic island period of 2025-02-08/09. | 1.3 s early; corrected. |
+| Balearic, Iceland, Gran Canaria, Faroe, South Korea, Malaysia, others | `osf_edr`, `kit_zenodo` | days to months each | KIT measurement campaigns, listed above. | — |
+
+Time offsets were measured against GPS-timed KIT recorders and NESO. Storage is one
+compressed file per grid, source and month, about 10–14 MB per grid-year
+([`docs/grids/compression.md`](compression.md)).
+
+Coverage gaps: A grid without reference data at the recording time can be neither confirmed nor excluded. Japan West, Québec, Taiwan, Australia's Pilbara, Mount Isa and Alice Springs systems and China's Northeast, Northwest and Yunnan grids have no open source; Western Australia's South West grid is covered for 2017-01..06 and from 2022, Darwin by spells, the latter two only where a Raspberry Shake hummed; the other Chinese grids are covered only where a Raspberry Shake hummed; IPS/UPS has none before 2015-05 and only spells (mostly nights) until 2022-10; Australia has no data for 2017-04..2024-11; ERCOT has almost none before 2014 and the US Western Interconnection none before 2001-09; Brazil is covered only for 2004-02..2008-08.
+
 ## Licences at a glance
 
 | Source | Licence / terms |

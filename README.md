@@ -1,241 +1,56 @@
 # geolocate-anything
 
 An OSINT tool that estimates **where and when an audio or video recording was made** from
-background sounds that people rarely notice. Four signals are planned:
+background sounds that people rarely notice:
 
-1. [**Grid hum**](#1-grid-hum-enf): the mains frequency gives the power grid and the exact UTC second.
-2. [**Aircraft**](#2-aircraft): Doppler curves of passing propeller aircraft, matched against
-   ADS-B history, give the place to within a few hundred metres and the start time.
-3. [**Church bells**](#3-church-bells)
-4. [**Emergency sirens**](#4-emergency-sirens)
+1. [**Grid hum**](#grid-hum-enf): the mains frequency gives the power grid and the exact UTC second.
+2. [**Aircraft**](#aircraft): Doppler curves of passing propeller aircraft, matched against
+   ADS-B history, give the place to within a few hundred metres.
+3. **Church bells** and 4. **Emergency sirens**: planned.
 
-The grid hum and aircraft are implemented, and each feeds the other: the hum's second
-lets one flyover locate, and the aircraft's place and time let a faint hum confirm.
+The two implemented signals feed each other: the hum's second lets one flyover locate,
+and the aircraft's place and time let a faint hum confirm.
 
----
+## Grid hum (ENF)
 
-## 1. Grid hum (ENF)
+Mains electricity runs at a nominal 50 or 60 Hz, but the actual frequency wanders by a few
+millihertz from second to second as supply and demand shift. The wander is identical
+everywhere on a synchronous grid and different between grids, and microphones near wiring
+pick up the hum. Matching the recording's hum against logged grid frequency identifies
+**the grid** and **the UTC second the recording started**.
 
-Documentation:
-- [`docs/grids/architecture.md`](docs/grids/architecture.md): design and evaluation
-- [`docs/grids/datasets.md`](docs/grids/datasets.md): grid data sources
-- [`docs/grids/compression.md`](docs/grids/compression.md): reference store format
-- [`docs/grids/seismic.md`](docs/grids/seismic.md): grid frequency reconstructed from seismometer hum
-- [`docs/metadata/architecture.md`](docs/metadata/architecture.md): time zone from the metadata clock (step 7)
-- [`docs/metadata/datasets.md`](docs/metadata/datasets.md): time-zone data for the metadata clue (step 7)
+The tool detects the hum, cuts the file where edits break its phase, extracts the
+frequency trace from the harmonics that move together, and cross-correlates it against
+every stored second of every candidate grid. The margin over the many wrong alignments
+gives a verdict (STRONG / MODERATE / WEAK / NONE). When the file's metadata clock differs
+from the hum's UTC by a real offset, it also narrows the grid to the matching time zones.
 
-### Principle
+Reference frequency comes from grid operators and research recorders where they publish it.
+Where nobody does (US interconnections, Russia and neighbours, China, Brazil, Western
+Australia), it is **reconstructed from the mains hum in open seismometer archives**: stations
+are screened, their hum is tracked second by second, and a second is kept where distant
+stations agree.
 
-Mains electricity runs at a nominal 50 or 60 Hz, but the actual frequency (the *Electrical
-Network Frequency*, ENF) wanders by a few millihertz from second to second as supply and
-demand shift. Every generator in a synchronous grid turns at the same rate, so this wander
-is identical everywhere on a grid and different between grids. Microphones near mains
-wiring or appliances pick up the hum. Matching the hum's frequency trace against logged
-grid frequency identifies **the grid** (continent scale) and **the UTC second the
-recording started**.
+Limits: no hum (battery devices, noise suppression, VoIP) means no answer; the result is a
+grid, not a city; clips under about 2 minutes are weak; grids without data for the date
+can be neither confirmed nor excluded.
 
-### Method
+Docs: [design](docs/grids/architecture.md) · [data sources](docs/grids/datasets.md) ·
+[seismic reconstruction](docs/grids/seismic.md) · [store format](docs/grids/compression.md) ·
+[time zone from metadata](docs/metadata/architecture.md)
 
-1. **Metadata.** GPS tags, capture timestamps and the device model are read from the
-   container. They are cross-checked against the result in step 7.
-2. **Hum detection.** The nominal frequency (50 or 60 Hz) is detected, which already
-   splits the world in two.
-3. **Edit detection.** Edited videos join clips recorded at different times. The file is
-   cut wherever the hum's phase jumps, and each segment is analysed independently.
-4. **ENF extraction.**
-   - Harmonics are selected by mutual *agreement* rather than loudness. Device tones
-     (chargers, fans, coil whine) near mains harmonics are often louder than the hum,
-     but only true mains harmonics move together.
-   - Each harmonic is evaluated by exact DFT on a shared frequency grid and normalised by
-     its own noise floor. The harmonics are combined as a generalised likelihood ratio.
-   - Viterbi decoding finds the most plausible smooth path, since grid frequency cannot
-     jump.
-5. **Search.** Every stored second of every candidate grid is streamed from memory-mapped
-   files and aligned by overlap-save FFT cross-correlation (about 19 million candidate
-   alignments per second per core, blocks spread over every core). Each alignment is scored on the shape of the
-   wander and on its absolute level, allowing for the recorder's clock error.
-6. **Verdict.** The scores of the many wrong alignments form an extreme-value null
-   distribution, which gives the probability that a wrong alignment would lead by the
-   observed margin. This maps to STRONG / MODERATE / WEAK / NONE.
-7. **Time zone.** Because the hum gives true UTC, a metadata clock that differs from it by
-   a real UTC offset reveals the device's time zone. Only the parts of the matched grid
-   that observed that offset at that instant (DST included) remain.
+## Aircraft
 
-### Reference data
+A propeller aircraft drones at a steady pitch, and as it passes a microphone the pitch
+falls: how far gives its speed, how fast gives its closest distance. The tool finds these
+flyovers in the recording, then searches ADS-B history (ADSB.lol) for the place that heard
+the right aircraft, at the right distance and speed, at the right moments, and no other in
+between. On the recording that inspired it, the answer lands within 160 m of the true spot.
 
-Each grid is backed by one or more sources. Where sources overlap they were cross-checked
-second by second, which is how most of the defects below were found.
-All series are stored at 1 s resolution, rounded to 1 mHz.
+Limits: only aircraft with ADS-B coverage, jets excluded; it needs a time window (a day for
+two or more flyovers, the hum's second for one).
 
-| Grid | Source | Period | Description and construction | Defects and corrections |
-|---|---|---|---|---|
-| Great Britain | `neso` | 2014 → last month | NESO open data, 1 s. | 2014 files use day-first dates in UK local time; 2025-04..10 files are stamped in BST for the whole month. Both converted to UTC. Values are in mHz with a misleading median; rescaled. |
-| Great Britain | `osf_pgf` | 2014–2020 | OSF power-grid-frequency collection; verified identical to NESO. | As `neso`. |
-| Great Britain | `pmu_zenodo` | 2025-04-28 → 2025-12 | PMU in London, 1 s, UTC. | — |
-| Continental Europe | `osf_pgf` | 2011-07 → 2020-09 | Germany at 1 s; gaps filled from France at 10 s. | Germany is in German wall-clock time (converted to UTC). France swaps day and month for days 1–12 and runs 17 s early against Germany; both repaired before gap filling. |
-| Continental Europe | `open_enf` | 2010, 2011-02..06, 2012-01 | Open-ENF German database (2010: 10 mHz steps); German TSOs' 4 s series for 2011–12. | 2010 recorder had no GPS time: timing only good to about ±2 s. |
-| Continental Europe | `netztransparenz` | 2012-02 → 2022-06 | German TSOs, 1 s; 2022-03 from TransnetBW's monthly file. | German wall-clock time and 2 s late against GPS-timed recorders; both corrected. |
-| Continental Europe | `energy_charts` | 2022-05 → today | Fraunhofer ISE, Freiburg, 1 s, UTC. | — |
-| Nordic | `fingrid` | 2015 → last month | Fingrid open data, 10 Hz averaged to 1 s. | Published in Finnish local time, not UTC; the autumn DST day logs one hour twice. Converted to UTC. |
-| Nordic | `osf_pgf` | 2015–2020 | The same Fingrid files via OSF. | As `fingrid`. |
-| Ireland | `osf_ireland` | 2014-05 → 2017 (gaps) | GPS-timed recorder near Dublin, 10 Hz averaged to 1 s. | — |
-| Ireland | `kit_zenodo` | 2021-12 | KIT/Jülich recorder release on Zenodo. | — |
-| Ireland | `eirgrid` | mid-2020 → today | EirGrid Smart Grid Dashboard, 5 s at 10 mHz. | Irish wall-clock time and 2 s late; corrected. |
-| Australia (NEM, Tasmania) | `aemo_causer_pays` | 2011-01 → 2017-03 | AEMO FCAS data, 4 s. | — |
-| Australia (NEM, Tasmania) | `aemo_annual` | 2010–2025 | AEMO yearly frequency workbooks, 4 s, imported with `refs import-aemo`. | — |
-| Australia (NEM, Tasmania) | `aemo_fpp` | 2024-12 → today | AEMO regional frequency, 4 s; mainland from NSW, gaps from QLD. | — |
-| Western Australia (SWIS) | `seismic_perth_basin` | 2017-01-25 → 2017-06 | Reconstructed from the 50 Hz hum seen directly in the Perth Basin Array (250 samples/s, GPS-timed, at AusPass); only seconds on which two sites agree. See [`docs/grids/seismic.md`](docs/grids/seismic.md#western-australia-and-darwin-seismic_swis-seismic_perth_basin-seismic_darwin). | A temporary deployment: nothing after June. |
-| Western Australia (SWIS) | `seismic_swis` | 2022-02 → today; one station in 2020 | Reconstructed from the 50 Hz hum in Raspberry Shake geophones between Toodyay, Perth and Harvey, decoded as for China. | 11–19 mHz per station against a direct line; seconds beyond ±60 mHz are empty. Not GPS-timed (NTP). |
-| Darwin–Katherine | `seismic_darwin` | spells of 2018-10 → 2022-07, 2024-10 → today | Same method: one address in Darwin. | One station: nothing to confirm it. |
-| US Western | `seismic_west` | 2001-09 → 2018-12, 2025-08 → today | Reconstructed from the 60 Hz hum in GPS-timed seismometers from Vancouver Island to New Mexico; only seconds on which two sites agree. See [`docs/grids/seismic.md`](docs/grids/seismic.md#us-western-seismic_west). | Until about 2010 from 100 samples/s analogue stations (within about a second of the GPS-timed ones). Nothing before 2001-09. |
-| US Western | `aeso` | 2019-01 → 2025-07 | Alberta system frequency, 2 s. | UTC column runs 3 s late; corrected. |
-| US Western | `osf_edr` | 2019-05, 2024-01..11 | KIT GPS recorders in Colorado and Salt Lake City. | — |
-| US Western | `lbnl_upmu` | 2015-10-01 → 12 | LBNL micro-PMU in Berkeley, derived from the 120 Hz voltage angle. | — |
-| US Eastern | `seismic_east` | 2001-09 → today | Reconstructed from the 60 Hz hum in GPS-timed seismometers; 3–5 stations fused. See [`docs/grids/seismic.md`](docs/grids/seismic.md#us-eastern-seismic_east). | Weak months refetched 2026-11-12 after a rescreen: 2012 now 67% (was 1%), 2013 91% (was 41%), 2010–2011 97–98%, other years 92–100% except 2001 (76%). Still under 90%: 2001-09/12, 2002-01..05, 2003-09, 2004-11, 2010-03, 2011-12..2012-06, 2012-10..2013-01, 2013-03, 2015-04/05, 2016-02, 2017-10, 2021-10/11 ([details](docs/grids/seismic.md#rescreen-of-20102013-2026-11-12)). |
-| US Eastern | `osf_edr` | 2023-06/07 | KIT recorder in Florida. | Not GPS-locked: drifts −4 s to −13 s against `seismic_east`, so it ranks below it. |
-| ERCOT (Texas) | `seismic_ercot` | 2014-02 → today; days of 2009 | Reconstructed from the 60 Hz hum in GPS-timed seismometers in Dallas–Fort Worth and the Permian Basin; from 2015-02 only seconds on which two sites agree. See [`docs/grids/seismic.md`](docs/grids/seismic.md#ercot-seismic_ercot). | No station for 2012–2013. One site (Azle) carries most of 2014. Excursions beyond ±250 mHz (2021-02-15) are not tracked. |
-| ERCOT (Texas) | `ercot_etts` | ~150 days of 2011–12 | ERCOT EMS system frequency, 4 s. | — |
-| ERCOT (Texas) | `osf_edr` | 2019-05 | KIT recorders at two Texas sites. | — |
-| India | `grid_india_pmu` | 2020-12-20 → 2023-08-20 | Grid-India PMU at Balipara, Assam, 1 s. | Logged in IST; converted to UTC. |
-| Southern Africa | `pmu_zenodo` | 2025-04-28 → 2025-12 | PMU in Stellenbosch, 1 s. | — |
-| Japan East (50 Hz) | `dtu_tokyo` | 42 days of 2017, 317 of 2020 | DTU recorder in Tokyo, 0.5 s (CC BY-NC-ND). | — |
-| IPS/UPS (Russia & neighbours) | `seismic_ips` | 2022-10 → today (gaps) | Reconstructed from the 50 Hz hum in GPS-timed strong-motion stations in Azerbaijan, Kazakhstan and Kyrgyzstan; only seconds on which two sites agree. See [`docs/grids/seismic.md`](docs/grids/seismic.md#ipsups-from-azerbaijan-and-central-asia-seismic_ips). | Stations hum only part of the time: 98% of 2025-04 is stored, 74% of 2023-01, 6–15% of the months of 2023-03..2024-10 tried. Sites can differ by up to ~2 s. |
-| IPS/UPS (Russia & neighbours) | `seismic_estonia` | 2015-05 → 2025-02-08 (gaps) | Reconstructed from the 50 Hz hum in the Estonian national seismic network (250 samples/s, GPS-timed) while the Baltic states were part of IPS/UPS; only seconds on which two sites agree. See [`docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia`](docs/grids/seismic.md#ipsups-from-estonia-seismic_estonia). | Sites hum by spells, mostly at night: 4–25% of the seconds of the months checked. ~1 s ahead of KIT's recorders (r 0.95–0.996, 2.7 mHz RMS against Kaunas/Tallinn 2025). |
-| IPS/UPS (Russia & neighbours) | `seismic_ips_shake` | 2021 → today (gaps) | Raspberry Shakes in Kazakhstan, Kyrgyzstan, Uzbekistan, Georgia, Belarus and Estonia (until 2025-02-08), the 50 Hz line on Nyquist decoded as for China, fused with `seismic_ips`'s stations, which decide where they hum. Fills what `seismic_ips` and `seismic_estonia` leave. See [`docs/grids/seismic.md#ipsups-from-raspberry-shakes-seismic_ips_shake`](docs/grids/seismic.md#ipsups-from-raspberry-shakes-seismic_ips_shake). | Shakes good to ~5 mHz (r 0.945 median against the direct stations). In night probes 2023–2024 go from ~24% of seconds to 96–98%; nothing added before 2021. Backfilled offline. |
-| IPS/UPS (Russia & neighbours) | `osf_edr` | 2019-03-29 → 2019-04-17, 2019-04-30 → 05-11 | KIT recorders in Tallinn and St. Petersburg, 1 s. | Tallinn's clock ran 19–55 s late, growing by 1–2 s a day: corrected against `seismic_estonia`, its first four days dropped. |
-| China Southern (with Hong Kong, Macau) | `seismic_cn_south` | 2019-07 → 2025-12 (gaps; 326 days in all) | Reconstructed from the 50 Hz hum in Raspberry Shake geophones in Hong Kong and Guangdong. The line sits on the Nyquist frequency of their 100 samples/s; a decoder recovers the signed deviation. See [`docs/grids/seismic.md`](docs/grids/seismic.md#china-seismic_cn_). | 4–7 mHz per station, against 1 mHz for a direct line. Stations hum by spells. |
-| China North & Central | `seismic_cn_north` | 2019-08 → 2020-03, 2022-09 → 2024-09 (483 days) | Same method: Beijing, Tianjin, Ordos. | As above; often one station alone. |
-| China East | `seismic_cn_east` | 2023-10 → 2024-04 (53 days) | Same method: Xuzhou, Xiamen. | As above. |
-| China Southwest | `seismic_cn_southwest` | 2021-03 → 2024-02 (504 days) | Same method: one station in Chongqing. | One station: nothing to confirm it. |
-| Brazil (SIN) | `seismic_brazil` | 2004-02 → 2008-08 (gaps) | Reconstructed from the 60 Hz hum in one University of São Paulo seismic recorder. See [`docs/grids/seismic.md#brazil-seismic_brazil`](docs/grids/seismic.md#brazil-seismic_brazil). | One site; clock within ~2 s of UTC, not GPS-timed. |
-| IPS/UPS and Baltic island mode | `osf_baltic` | 2025-01-23 → 2025-02-09 | KIT recorders in Kaunas and Tallinn, 0.1 s; covers the whole Baltic island period of 2025-02-08/09. | 1.3 s early; corrected. |
-| Balearic, Iceland, Gran Canaria, Faroe, South Korea, Malaysia, others | `osf_edr`, `kit_zenodo` | days to months each | KIT measurement campaigns. See [`docs/grids/datasets.md`](docs/grids/datasets.md). | — |
-
-Time offsets were measured against GPS-timed KIT recorders and NESO. Storage is one
-compressed file per grid, source and month, about 10–14 MB per grid-year
-([`docs/grids/compression.md`](docs/grids/compression.md)).
-
-### Grid frequency from seismometer hum
-
-Many grids publish no frequency at all (the US Eastern, Western and Texas interconnections,
-Russia and its neighbours, China, Brazil, Western Australia). For these, the frequency is
-reconstructed from the mains hum that seismometers pick up from nearby wiring, using
-open, time-stamped seismic archives (EarthScope, GEOFON, AusPass, USP, Raspberry Shake):
-
-- **Direct line:** stations sampling at more than twice the mains frequency show the line
-  as is; its frequency is tracked second by second.
-- **Folded line:** in older 100 samples/s channels a 60 Hz line folds to 40 Hz and is
-  tracked there.
-- **Line on Nyquist:** in 100 samples/s Raspberry Shakes a 50 Hz line sits exactly on the
-  Nyquist frequency, where it loses its sign; the digitiser's filter roll-off and the
-  beat's continuity recover it.
-- **Fusion:** stations are screened per month and fused, and where possible a second is
-  stored only when two sites far apart agree. The results are checked against measured
-  recorders, known grid events and earthquake arrivals.
-
-Sources built this way are named `seismic_*` in the table above. Method, validation,
-coverage and limits for each grid:
-[`docs/grids/seismic.md`](docs/grids/seismic.md).
-
-### Limits
-
-- **No hum, no answer.** Battery devices far from wiring, noise suppression, VoIP and
-  heavy compression can remove the hum. The tool reports this rather than guessing.
-- **Grid, not city.** All points on one synchronous grid share the same ENF.
-- **Short clips** (about 2 minutes or less) are information-limited.
-- **Edit detection** relies on the hum's phase alone: about half of all cuts are found
-  when the hum is clear, fewer when it is faint.
-- **Coverage.** A grid without reference data at the recording time can be neither
-  confirmed nor excluded. Japan West, Québec, Taiwan, Australia's Pilbara, Mount Isa and Alice Springs systems and China's Northeast, Northwest and Yunnan grids have no open source; Western Australia's South West grid is covered for 2017-01..06 and from 2022, Darwin by spells, the latter two only where a Raspberry Shake hummed; the other Chinese grids are covered only where a Raspberry Shake hummed; IPS/UPS has none before
-  2015-05 and only spells (mostly nights) until 2022-10;
-  Australia has no data for 2017-04..2024-11; ERCOT has almost none before 2014 and the
-  US Western Interconnection none before 2001-09; Brazil is covered only for 2004-02..2008-08.
-
----
-
-## 2. Aircraft
-
-Documentation: [`docs/aircraft/architecture.md`](docs/aircraft/architecture.md)
-
-### Principle
-
-A propeller aircraft drones at a steady pitch (its blade-pass frequency, ~60–200 Hz, and
-harmonics). Flying past a microphone, the pitch falls as it goes by: how far it falls
-gives the speed, how fast it falls the closest distance, and the details of the curve
-the exact path. ADS-B history records where every equipped aircraft was, second by
-second. A place that heard the right aircraft at the right distance and speed, at the
-right moments, and heard no other between, is where the recording was made. The tones
-are far below what anyone notices, pass through walls and survive phone codecs.
-
-### Method
-
-1. **Flyovers.** A whitened spectrogram of the recording is scanned with Doppler
-   templates (every speed, closest distance and rest frequency at once); each detection
-   is measured as ranges of CPA time, speed, slant distance and rest frequency, with its
-   harmonics.
-2. **Flight history.** ADSB.lol's daily archives (~4 GB/day) are streamed into a compact
-   store of the day's non-jet tracks (`geoloc aircraft fetch DAY`), with altitudes put
-   above the WGS84 ellipsoid: each flight kept as the nodes of a smooth curve (a node
-   per turn, climb or speed change, one per 100 s on a steady leg; ~50 MB a day, within
-   ~10-30 m of the raw fixes); ground heights from the Copernicus 90 m DEM.
-3. **Corridors.** For each flyover, the 200 m cells along every flight of the right speed
-   at the right slant distance, whose type can make the flyover's tone: a propeller's
-   blade-pass frequency (RPM × blades / 60) is nearly fixed per type, so a per-type table
-   ([docs/aircraft/blade-pass.md](docs/aircraft/blade-pass.md)) drops, say, a Cessna 152
-   for a 114 Hz flyover (a PC-12's); unknown types are kept. With two or more flyovers,
-   only cells where flights for different flyovers overlap in space and in the start
-   time they imply are rasterized (the same survivors from a fraction of the cells).
-4. **One clock.** Cells where the flights' closest approaches are heard as far apart as
-   the flyovers in the recording; subsets of the flyovers are tried, so clutter (boats,
-   cars) stays unmatched.
-5. **Silence.** Cells that would have heard another aircraft pass closer, unheard,
-   between the flyovers are dropped.
-6. **Exact curves.** At the survivors each flight's curve is modelled from its real
-   trajectory (emission time solved for every instant) and scored on the spectrogram's
-   ridges, with one start time for all flyovers; the best place per combination of
-   flights is refined to 20 m.
-
-On the recording from the video that inspired this ([colsto](https://www.youtube.com/watch?v=UytYrhYLOKI)),
-searching Long Island for the whole of 2026-09-08 returns the reference place to within
-160 m, the same two aircraft and the start second, in a minute. Over the whole continental
-US with only the day known, two flyovers are not enough (the reference place ranks third
-of 32,000, a weak verdict); with the hum's second, the same recording locates strongly.
-
-### With the hum
-
-`geoloc locate` runs the aircraft stage when ADS-B history is stored: a located hum gives
-the second and the grid, where one flyover suffices; a weak hum gives candidate seconds,
-one of which two flyovers can confirm; without hum, the aircraft's place and time
-narrow the hum search to ± 6 h of one grid. On the reference recording the hum alone is
-strong, and at its second the aircraft find the place over the whole US Eastern grid in
-90 s. The dashboard then shows the matched aircraft on a street map (track, position
-and heading at closest approach, registry details on click) and each flyover's
-spectrogram with the curve modelled from the aircraft's track.
-
-### Edited files
-
-When the hum finds edit points, each clip gets its own spectrogram and flyovers (no
-template straddles a cut) and its own clock: a clip whose hum located gives its second,
-where one flyover suffices; otherwise its hum candidates or the date window, two
-flyovers. The clips' order and the gaps between them are unknown, so only the place is
-shared (the camera is assumed not to have moved). Each clip's best answers (and, for a
-single flyover, their mirror image across the aircraft's track) are tried as the place;
-every clip is searched again within 1 km of each, and the place with the most evidence
-is refined to one point where every clip's clock is fitted. The report gives each clip's
-start time and aircraft, and flags a clip that, searched alone, located elsewhere.
-
-### Limits
-
-- Only aircraft with ADS-B in ADSB.lol's coverage; jets are excluded.
-- A time window is needed: a day for two or more flyovers, seconds for one.
-- Edited files: a clip with one flyover needs its own hum second; the camera is assumed
-  not to move between clips. Wind and refraction are not modelled.
-
-## 3. Church bells
-
-## 4. Emergency sirens
-
----
+Docs: [design](docs/aircraft/architecture.md) · [blade-pass frequencies](docs/aircraft/blade-pass.md)
 
 ## Getting started
 
@@ -256,89 +71,9 @@ docker run --rm -v geoloc-data:/data geoloc geoloc refs refresh --grid great_bri
 ```
 
 A self-hosted copy downloads reference data from the public sources into its own cache
-(the `geoloc-data` volume); buckets and tokens are optional (see
-the environment variables below).
+(the `geoloc-data` volume). Buckets and tokens are optional.
 
-## Usage
-
-```bash
-geoloc refs refresh --grid great_britain        # download reference data
-geoloc locate recording.mp4 --json report.json  # analyse a file
-geoloc serve                                    # web dashboard on http://127.0.0.1:8000
-```
-
-| Command | Purpose |
-|---|---|
-| `geoloc locate FILE [--grid G] [--from ISO --to ISO] [--no-split] [--json out]` | Full analysis |
-| `geoloc serve` | Web dashboard |
-| `geoloc grids [--at DATE]` | Synchronous grids and their countries |
-| `geoloc refs refresh [--grid G]` | Fetch every month not stored yet (all grids by default) |
-| `geoloc refs fetch SOURCE --grid G --months A:B [--force]` | Fetch specific months |
-| `geoloc refs list` | Stored references and sources |
-| `geoloc refs push \| pull [--lazy]` | Sync the store with the bucket (`--lazy`: manifests and each source's newest month; the rest come on first read) |
-| `geoloc refs import-aemo FILE...` | Import AEMO's hand-downloaded yearly workbooks |
-| `geoloc locate FILE [--aircraft auto\|on\|off] [--aircraft-bbox W,S,E,N] [--aircraft-fetch]` | Hum and aircraft together |
-| `geoloc aircraft events FILE [--json out]` | Flyovers in a recording (CPA time, speed, slant distance, rest frequency) |
-| `geoloc aircraft fetch DAY\|FIRST..LAST... [--push [--drop]] [--force] [--parts A B] [--bbox W,S,E,N]` | Store days of ADSB.lol history (non-jets), newest first; `--push` uploads each to the aircraft bucket (skipping days it holds), `--drop` then frees the local copy |
-| `geoloc aircraft push [DAY...]` \| `pull [DAY...]` | Sync ADS-B days with the aircraft bucket (`pull` alone: every day's coverage sidecar) |
-| `geoloc aircraft index [DAY...] [--force]` | Build stored days' chunk index (`<day>.idx`, ~3 MB, from the store alone; otherwise built on first use) |
-| `geoloc aircraft locate FILE --from ISO --to ISO --bbox W,S,E,N [--min-events N] [--no-type-prior] [--json out]` | Aircraft-only search (`--no-type-prior`: keep aircraft whose type cannot make a flyover's tone) |
-| `geoloc aircraft learn-f0 REPORT.json... [--min-level moderate] [--list]` | Add confirmed matches' rest frequencies to the per-type blade-pass table (`<cache>/adsb/blade_pass_learned.json`) |
-
-Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`); ADS-B
-days under `adsb/` there (~50 MB each, plus a ~3 MB chunk index `<day>.idx` built from it), DEM tiles under `dem/`.
-
-Environment (all optional): `GEOLOC_GRID_BUCKET` with `GEOLOC_S3_ENDPOINT_URL`, `GEOLOC_GRID_ACCESS_KEY_ID`,
-`GEOLOC_GRID_SECRET_ACCESS_KEY`, `GEOLOC_S3_REGION` mirrors the store to an S3 bucket (and
-`refs refresh` uploads to it); with it, a month a manifest lists but this machine lacks is
-downloaded when first read (a search first fetches every month of its candidate grids,
-16 at a time), so the dashboard keeps no copy of its own: on start it pulls only the
-manifests and each source's newest month (`refs pull --lazy`); `GEOLOC_REFS_KEEP_MB` bounds the local copy, evicting the
-months fetched from the bucket that were not read for 10 minutes (months written here stay
-until uploaded); `GEOLOC_ADMIN_TOKEN` gates the dashboard's Refresh and
-import; `GEOLOC_EARTHSCOPE_REFRESH_TOKEN` enables the EarthScope seismic refreshes (`seismic_east`,
-`seismic_ips`; the anonymous EarthScope quota cannot backfill); `GEOLOC_US_SEISMIC_REFRESH`
-(with the token) enables `seismic_west` and `seismic_ercot`, ~1.3 TB of download to
-backfill, so they are fetched offline and pushed, never refreshed by the dashboard; `GEOLOC_SHAKE_REFRESH` enables the Raspberry Shake
-sources (`seismic_cn_*`, `seismic_swis`, `seismic_darwin`, `seismic_ips_shake`), whose decoding costs ~25 CPU-minutes per station and month: they
-are backfilled on a separate machine and pushed (`refs push`), never refreshed by the
-dashboard; `GEOLOC_AUSPASS_REFRESH` enables `seismic_perth_basin` (a closed 2017 archive, a few GB a month, backfilled the same way); `GEOLOC_GEOFON_REFRESH` enables `seismic_estonia` (a closed period, ~4 GB a month, backfilled the same way); `GEOLOC_BRAZIL_REFRESH` enables `seismic_brazil` refreshes (a closed
-2004–2008 archive at ~1.1 GB a month, backfilled offline and pushed the same way);
-`GEOLOC_AIRPLANE_BUCKET` with `GEOLOC_AIRPLANE_ACCESS_KEY_ID`, `GEOLOC_AIRPLANE_SECRET_ACCESS_KEY`
-(endpoint and region from `GEOLOC_S3_*`) is the ADS-B store's own bucket: days are built
-offline (`aircraft fetch FIRST..LAST --push --drop`) and kept there; a server pulls every
-day's coverage sidecar on start (the history map) and streams a day's store into its
-volume when an analysis first needs it; the dashboard's aircraft tab **Fetch the latest data** (admin)
-fetches whichever of the last 7 UTC days are missing from ADSB.lol and uploads them; `GEOLOC_AIRPLANE_FETCH` lets `locate` (and so the
-dashboard) download an ADSB.lol day the bucket lacks (~4 GB streamed, ~50 MB kept, then
-uploaded to the bucket; at most `GEOLOC_AIRPLANE_MAX_FETCH` days per analysis, default 1), and
-`GEOLOC_AIRPLANE_KEEP_DAYS` keeps only that many days' stores, the ones used last (for a
-bounded volume); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
-cores, 4 to 8), and how many threads `locate` uses (default: every core): a search
-spreads its blocks over them (~30 MB each), long compressed audio is decoded and
-resampled in 30 s chunks on them (the same samples as one pass), and the faint-hum
-ridge test scores its off-grid nulls on them.
-
-## Building
-
-Requires a C++23 compiler with `#embed` (GCC 15 or Clang 19+), CMake ≥ 3.25, and Boost (Asio, Beast,
-JSON), CLI11, libcurl, zstd, FFTW3, libarchive, OpenSSL, zlib and FFmpeg development
-packages.
-
-```bash
-cmake -S . -B build -G Ninja && cmake --build build   # -> build/geoloc
-build/geoloc_tests                                     # offline test suite
-```
-
-On Ubuntu 24.04, whose GCC lacks `#embed`, configure with `-DCMAKE_CXX_COMPILER=clang++-20`
-(see `.github/workflows/ci.yml` for the full package list).
-
-Build speed: Clang compiles this code ~30% faster than GCC (`-DCMAKE_CXX_COMPILER=clang++`;
-the Docker image and CI use it); the common headers (Asio, JSON, std) are precompiled
-(`src/pch.hpp`, turn off with `-DGEOLOC_PCH=OFF`); Asio's and CLI11's non-template code
-compiles once, in `src/*_impl.cpp`; the slowest sources are listed first so Ninja never ends
-on one long job; and ccache is used when installed (`-DGEOLOC_CCACHE=OFF` to skip it), so
-a fresh build directory or a branch switch recompiles only what changed.
+All commands, environment variables and build instructions: [`docs/usage.md`](docs/usage.md).
 
 ## License
 
