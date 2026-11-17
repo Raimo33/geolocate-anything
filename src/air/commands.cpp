@@ -102,7 +102,7 @@ void register_commands(CLI::App& app, int& rc) {
   static double lo_cell = 200, lo_c = SOUND_SPEED, lo_wf = 1.0;
   static int lo_win = 2048;
   static double lo_region = 3.0;
-  static bool lo_silence_whole = false, lo_no_silence = false, lo_known_types = false, lo_offline = false;
+  static bool lo_silence_whole = false, lo_no_silence = false, lo_known_types = false, lo_offline = false, lo_no_prior = false;
   lo->add_option("file", lo_file)->required();
   lo->add_option("--from", lo_from, "earliest start of the recording (ISO 8601 UTC or epoch seconds)")->required();
   lo->add_option("--to", lo_to, "latest start of the recording")->required();
@@ -119,6 +119,7 @@ void register_commands(CLI::App& app, int& rc) {
   lo->add_flag("--no-silence", lo_no_silence, "do not reject places that would have heard other aircraft between the flyovers");
   lo->add_flag("--silence-whole", lo_silence_whole, "apply the silence test to the whole recording, not only between the matched flyovers");
   lo->add_flag("--known-types", lo_known_types, "only aircraft of known (non-jet) type");
+  lo->add_flag("--no-type-prior", lo_no_prior, "do not drop aircraft whose type cannot make a flyover's tone (blade-pass table)");
   lo->add_flag("--offline", lo_offline, "no DEM downloads (heights fall back to the geoid)");
   lo->add_option("--json", lo_json, "write a JSON report here");
   lo->callback([&rc] {
@@ -142,6 +143,7 @@ void register_commands(CLI::App& app, int& rc) {
     so.box = *parse_bbox(lo_bbox);
     so.min_events = lo_min_events, so.max_events = lo_max_events, so.cell_m = lo_cell, so.c = lo_c, so.window_factor = lo_wf;
     so.silence = !lo_no_silence, so.silence_whole = lo_silence_whole, so.unknown_types = !lo_known_types;
+    so.type_prior = !lo_no_prior;
     const double t0 = so.start_min - 600, t1 = so.start_max + au.duration() + 600;
     bool any_day = false;
     for (i64 d = floor_div(i64(t0), 86400) - 1; d <= floor_div(i64(t1), 86400); ++d) any_day |= ensure_day(iso_date(d * 86400));
@@ -239,6 +241,61 @@ void register_commands(CLI::App& app, int& rc) {
       report.push_back(r);
     }
     if (fe_json) std::printf("%s\n", dump(json::object{{"days", report}}).c_str());
+  });
+
+  // aircraft learn-f0 REPORT...
+  auto* lf = air->add_subcommand("learn-f0", "add confirmed matches' rest frequencies to the per-type blade-pass table");
+  static std::vector<std::string> lf_files;
+  static std::string lf_min = "moderate";
+  static bool lf_list = false;
+  lf->add_option("report", lf_files, "JSON reports (`aircraft locate --json`, or `locate --json` with an aircraft section)");
+  lf->add_option("--min-level", lf_min, "only results at least this confident (weak, moderate, strong)");
+  lf->add_flag("--list", lf_list, "print the learned observations");
+  lf->callback([&rc] {
+    auto rank = [](std::string_view l) { return l == "strong" ? 3 : l == "moderate" ? 2 : l == "weak" ? 1 : 0; };
+    BladePassTable learned;  // observations only
+    if (auto txt = read_file(BladePassTable::learned_path())) learned.merge_learned(parse_json(*txt));
+    const BladePassTable seed = BladePassTable::builtin();
+    int added = 0;
+    for (auto& f : lf_files) {
+      auto txt = read_file(f);
+      if (!txt) throw std::invalid_argument("cannot read " + f);
+      json::value v = parse_json(*txt);
+      // `locate --json`: the aircraft stage's hypotheses; the most confident result.
+      if (auto* a = jget(v, "aircraft"); a && a->is_object()) {
+        json::value best;
+        double best_key = -1;
+        if (auto* hs = jget(*a, "hypotheses"); hs && hs->is_array())
+          for (auto& h : hs->as_array())
+            if (auto* r = jget(h, "result"); r && r->is_object()) {
+              const json::value* c = jget(*r, "candidates");
+              const double sc = c && c->is_array() && !c->as_array().empty() ? jnum(c->as_array()[0], "score", 0) : -1;
+              const double key = sc < 0 ? -1 : rank(jstr(*r, "level")) * 1e6 + sc;
+              if (key > best_key) best_key = key, best = *r;
+            }
+        v = best;
+      }
+      const std::string level = jstr(v, "level");
+      const json::value* cands = jget(v, "candidates");
+      if (rank(level) < rank(lf_min) || !cands || !cands->is_array() || cands->as_array().empty()) {
+        std::printf("%s: %s, skipped\n", f.c_str(), level.empty() ? "no aircraft result" : level.c_str());
+        continue;
+      }
+      const json::value* ms = jget(cands->as_array()[0], "matches");
+      if (!ms || !ms->is_array()) continue;
+      for (auto& m : ms->as_array()) {
+        const std::string type = jstr(m, "type");
+        const double f0 = jnum(m, "f0_hz");
+        if (type.empty() || !(f0 > 0)) continue;
+        learned.learn(type, f0), ++added;
+        std::printf("%s: %s %s %.1f Hz%s\n", f.c_str(), jstr(m, "flight").c_str(), type.c_str(), f0,
+                    seed.known(type) && !seed.compatible(type, {f0}) ? "  (outside the built-in range: now allowed)" : "");
+      }
+    }
+    if (added) atomic_write(BladePassTable::learned_path(), dump(learned.learned_json(), {.indent = 2, .sort_keys = true}));
+    if (lf_list || lf_files.empty()) std::printf("%s\n", dump(learned.learned_json(), {.indent = 2, .sort_keys = true}).c_str());
+    std::printf("%d observation(s) added (%s)\n", added, BladePassTable::learned_path().string().c_str());
+    rc = 0;
   });
 
   // aircraft push [DAY...]

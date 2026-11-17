@@ -37,6 +37,7 @@ struct Seg {
   const Track* tr = nullptr;
   Path path;  // ECEF
   bool eligible = true;  // type allowed as an event source
+  std::vector<char> f0_ok;  // per event: the type can make its tone
 };
 
 struct Piece {
@@ -323,8 +324,9 @@ JointFit joint_fit(const Spectrogram& s, const std::vector<Event>& ev, const std
 
 // All combinations, one entry per event at most, of >= min_events events whose start
 // intervals intersect.
+using PairOk = std::function<bool(int ev_a, int seg_a, int ev_b, int seg_b)>;
 void combos(const std::vector<std::vector<Hit>>& by_event, std::size_t i, std::vector<std::pair<int, int>>& cur, double a, double b, int min_events,
-            std::vector<Survivor>& out, std::uint64_t cell, std::size_t cap) {
+            std::vector<Survivor>& out, std::uint64_t cell, std::size_t cap, const PairOk& pair_ok) {
   if (out.size() >= cap) return;
   if (i == by_event.size()) {
     if (int(cur.size()) >= min_events) out.push_back({cell, cur, a, b});
@@ -333,12 +335,13 @@ void combos(const std::vector<std::vector<Hit>>& by_event, std::size_t i, std::v
   for (auto& h : by_event[i]) {
     const double na = std::max(a, h.a), nb = std::min(b, h.b);
     if (na > nb) continue;
+    if (pair_ok && std::any_of(cur.begin(), cur.end(), [&](auto& p) { return !pair_ok(p.first, p.second, h.event, h.seg); })) continue;
     cur.emplace_back(h.event, h.seg);
-    combos(by_event, i + 1, cur, na, nb, min_events, out, cell, cap);
+    combos(by_event, i + 1, cur, na, nb, min_events, out, cell, cap, pair_ok);
     cur.pop_back();
   }
   // This event unexplained (if enough remain to reach min_events).
-  if (int(cur.size() + by_event.size() - i - 1) >= min_events) combos(by_event, i + 1, cur, a, b, min_events, out, cell, cap);
+  if (int(cur.size() + by_event.size() - i - 1) >= min_events) combos(by_event, i + 1, cur, a, b, min_events, out, cell, cap, pair_ok);
 }
 
 std::string fmt_utc(double t) { return std::isfinite(t) ? iso(t) : "?"; }
@@ -403,6 +406,7 @@ SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& e
     auto r = search(spec, events, tracks, terrain, ro);
     all.segments += r.segments, all.corridor_cells += r.corridor_cells, all.consistent_cells += r.consistent_cells;
     all.silent_cells += r.silent_cells, all.scored += r.scored;
+    all.type_pairs += r.type_pairs, all.type_pruned_pairs += r.type_pruned_pairs, all.type_pruned_segments += r.type_pruned_segments;
     all.cpu_corridors += r.cpu_corridors, all.cpu_centre += r.cpu_centre;
     all.wall_tiles += r.wall_tiles, all.wall_subgrid += r.wall_subgrid, all.wall_refine += r.wall_refine, all.seconds += r.seconds;
     all.events_used = r.events_used;
@@ -505,6 +509,34 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
   }
   res.segments = segs.size();
 
+  // Rest-frequency prior: which events each segment's type can sound like.
+  std::vector<std::vector<double>> ev_f0s(ev.size());
+  for (std::size_t i = 0; i < ev.size(); ++i) {
+    for (auto& l : ev[i].lines) ev_f0s[i].push_back(l.f0);
+    if (ev_f0s[i].empty() && ev[i].f0 > 0) ev_f0s[i].push_back(ev[i].f0);
+  }
+  BladePassTable loaded;
+  if (o.type_prior && !o.blade_pass) loaded = BladePassTable::load();
+  const BladePassTable& bp = o.blade_pass ? *o.blade_pass : loaded;
+  for (auto& s : segs) {
+    s.f0_ok.assign(ev.size(), 1);
+    if (!o.type_prior || !s.eligible) continue;
+    int dropped = 0;
+    for (std::size_t i = 0; i < ev.size(); ++i) {
+      s.f0_ok[i] = bp.compatible(s.tr->type, ev_f0s[i], o.prior);
+      dropped += !s.f0_ok[i];
+    }
+    res.type_pairs += ev.size(), res.type_pruned_pairs += std::size_t(dropped);
+    res.type_pruned_segments += dropped == int(ev.size());
+  }
+  // One aircraft heard twice: its two tones must agree (its RPM is nearly fixed).
+  PairOk pair_ok;
+  if (o.type_prior && o.same_aircraft_f0_tol > 0)
+    pair_ok = [&](int ea, int sa, int eb, int sb) {
+      return segs[std::size_t(sa)].tr->icao != segs[std::size_t(sb)].tr->icao ||
+             f0_consistent(ev_f0s[std::size_t(ea)], ev_f0s[std::size_t(eb)], o.same_aircraft_f0_tol);
+    };
+
   // Per event: pieces flying at the right speed in the right window.
   const CellGrid grid(o.cell_m);
   struct EvPieces {
@@ -520,7 +552,7 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
     max_d = std::max(max_d, e.d);
     const double wa = o.start_min + e.tc_lo - o.tc_tol_s - ep.dhi / o.c - 5, wb = o.start_max + e.tc_hi + o.tc_tol_s;
     const double vlo = e.v_lo - o.v_margin, vhi = e.v_hi + o.v_margin;
-    ep.pieces = make_pieces(segs, wa, wb, 4.0, [&](const Seg& s, double sp) { return s.eligible && sp >= vlo && sp <= vhi; });
+    ep.pieces = make_pieces(segs, wa, wb, 4.0, [&](const Seg& s, double sp) { return s.eligible && s.f0_ok[i] && sp >= vlo && sp <= vhi; });
   }
   const double silence_m = o.silence_factor * max_d;
 
@@ -576,7 +608,7 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
     std::size_t corr = cells.size();
     for (auto& [k, per] : cells) {
       std::vector<std::pair<int, int>> cur;
-      combos(per, 0, cur, -INFINITY, INFINITY, min_events, surv, k, surv.size() + 64);
+      combos(per, 0, cur, -INFINITY, INFINITY, min_events, surv, k, surv.size() + 64, pair_ok);
     }
     std::size_t cons = 0;
     {
@@ -836,7 +868,8 @@ json::object result_json(const SearchResult& r, const std::vector<Event>& events
           {"events_used", used},
           {"candidates", cands},
           {"funnel",
-           json::object{{"segments", r.segments}, {"corridor_cells", r.corridor_cells}, {"consistent_cells", r.consistent_cells}, {"silent_cells", r.silent_cells}, {"scored", r.scored}}},
+           json::object{{"segments", r.segments}, {"corridor_cells", r.corridor_cells}, {"consistent_cells", r.consistent_cells}, {"silent_cells", r.silent_cells}, {"scored", r.scored},
+                        {"type_pairs", r.type_pairs}, {"type_pruned_pairs", r.type_pruned_pairs}, {"type_pruned_segments", r.type_pruned_segments}}},
           {"terrain_complete", r.terrain_complete},
           {"seconds", r.seconds}};
 }
@@ -850,6 +883,11 @@ std::string render_result(const SearchResult& r, const std::vector<Event>& event
   std::snprintf(b, sizeof b, "  funnel: %zu flight segments -> %zu corridor cells -> %zu with one clock -> %zu silent -> %zu scored\n", r.segments,
                 r.corridor_cells, r.consistent_cells, r.silent_cells, r.scored);
   out += b;
+  if (r.type_pairs) {
+    std::snprintf(b, sizeof b, "  rest-frequency prior: %zu of %zu (segment, event) pairs dropped (%.0f%%), %zu segments for every event\n",
+                  r.type_pruned_pairs, r.type_pairs, 100.0 * double(r.type_pruned_pairs) / double(r.type_pairs), r.type_pruned_segments);
+    out += b;
+  }
   std::snprintf(b, sizeof b, "  time: tiles %.1f s (corridors %.0f cpu-s, centre scoring %.0f cpu-s), sub-grid %.1f s, refinement %.1f s\n", r.wall_tiles,
                 r.cpu_corridors, r.cpu_centre, r.wall_subgrid, r.wall_refine);
   out += b;

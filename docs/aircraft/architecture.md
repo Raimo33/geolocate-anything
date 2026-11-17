@@ -80,6 +80,7 @@ reader (deflate, floating-point predictor, tiled or stripped) avoids a GDAL depe
 
 | Stage | What | Cost on the reference case (Long Island box, whole day) |
 |---|---|---|
+| Rest-frequency prior | A segment stays a candidate for an event only if its type can make the event's tone: blade pass (RPM × blades / 60) or, for direct-drive pistons, firing frequency, over the type's RPM range from descent to take-off, the event's f0 tried as ½, 1, 2 or 3 × that, ± 4% ([blade-pass.md](blade-pass.md)). Types not in the table (unknown, helicopters, geared engines) always stay. One aircraft explaining two events must have agreeing tones (± 5%, or a simple ratio). | see below |
 | Corridors | Per event, each flight segment flying within the event's speed range (± 12 m/s) in the window is cut in 4 s pieces; each piece writes its closest slant distance into the 200 m cells of its slab (cells whose foot falls in the piece, within reach of the slant range). Per (segment, cell), the minimum; minima at a segment end are not closest approaches. | 3,042 segments → 358k cells, 62 cpu-s |
 | One clock | Each (cell, segment) entry implies an interval for the recording's start (CPA reception time − the event's CPA time ± its range ± 4 s). A cell survives if entries for ≥ `min_events` events share an interval. Subsets of the events are tried: clutter stays unmatched. | → 54k cells |
 | Silence | Another aircraft passing closer than the matched flyovers' own slant range, between the first and last matched flyover, at a time no flyover was detected, would have been heard: the cell goes. | → 12k cells |
@@ -97,6 +98,21 @@ regions (at least 100 full fits, 30 sub-grid places, 2 refinements), and a regio
 survivors must come within 60% of the best answer found so far. A time window under
 6 h (a hum second) is searched in one pass over the whole box instead: few tracks
 fly in it even over a continent, and the tiles then run in parallel.
+
+### Rest-frequency prior: measured
+
+| Case | Without (`--no-type-prior`) | With |
+|---|---|---|
+| Synthetic unit test (4 segments; the two decoys are a C152 mimicking the PC-12's 105 Hz pass and a PC-12 mimicking the C172's 85 Hz pass) | 81,769 corridor cells → 660 one clock → 660 silent; 14.3 s; true pair #1, lead 43%; the decoy pair #2 | 5 of 24 (segment, event) pairs dropped; 75,866 → 386 → 386; 10.6 s; true pair #1, lead 44%; the decoy pair gone |
+| Reference case's ADS-B (2026-09-08, Long Island box −74.2..−72.5, 40.5..41.4, whole day), the two measured events (113.8 + 227.6 Hz, 130.2 Hz) on a noise recording (the original audio was not available to that run, so places are not scored and only the funnel counts) | 3,317 segments → 356,924 → 48,360 → 8,060 cells; 35.1 s (4 threads) | 847 of 6,634 pairs dropped (13%), 40 segments for both events; 356,924 → 45,056 (−7%) → 7,104 (−12%); 34.0 s. N22NY (PC12) + N93CQ (B350) survive: in a small box around the reference place they are the #1 combination, with or without the prior |
+| Same, northeastern US (−78..−70, 38..44) | 19,420 segments → 8.38M → 200,791 → 74,413 cells; 111.5 s | 4,600 of 38,840 pairs dropped (12%); 8.29M → 188,637 (−6%) → 70,295 (−6%); 110.5 s |
+
+The prior is cheap and safe but prunes little at these tones: 114 and 130 Hz sit inside
+the range of most piston singles (a six-cylinder engine fires at 3× shaft rate: 95–143
+Hz) and of many turboprops, and types the table does not hold (or unknown) are kept. It
+removes look-alikes at tones far from a type's band (a 105 Hz pass explained by a
+two-blade four-cylinder Cessna, an 85 Hz pass by a PC-12) and matters more for
+flyovers below ~90 Hz (airliner turboprops, slow pistons) or above ~150 Hz.
 
 Two scoring choices were measured on the reference case:
 

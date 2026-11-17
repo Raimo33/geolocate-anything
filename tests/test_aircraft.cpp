@@ -397,10 +397,13 @@ TEST(AircraftSearch, FindsTheListenerFromTwoFlyovers) {
   B.t0 = tB - std::hypot(900.0, 800.0 - 2.0) / SOUND_SPEED;
   Straight C{f, {-5000, 25000, 1200}, {120, 0, 0}, tA - 6};
   Straight D{f, {-15000, 8000, 800}, {0, -90, 0}, tB + 40};
-  std::vector<Track> tracks = {track_of(A, 0xa00010, "C172", start - 400, start + 1600), track_of(B, 0xa00011, "C172", start - 400, start + 1600),
-                               track_of(C, 0xa00012, "C172", start - 400, start + 1600), track_of(D, 0xa00013, "C172", start - 400, start + 1600)};
+  // Types and tones as the blade-pass table has them: A a PC-12 (4 blades at 1,575 rpm),
+  // B a Cessna 172 (2 blades at 2,550 rpm); the decoys are types that cannot make the
+  // tone of the event they mimic (a C152 cannot sing at 105 Hz, a PC-12 at 85 Hz).
+  std::vector<Track> tracks = {track_of(A, 0xa00010, "PC12", start - 400, start + 1600), track_of(B, 0xa00011, "C172", start - 400, start + 1600),
+                               track_of(C, 0xa00012, "C152", start - 400, start + 1600), track_of(D, 0xa00013, "PC12", start - 400, start + 1600)};
   const Vec3 o = ecef(lat0, lon0, 2.0);
-  auto x = render({{ecef_path(tracks[0]), {105.0, 210.0}}, {ecef_path(tracks[1]), {92.0}}}, o, start, 1200, 0.5, 1.0, 3);
+  auto x = render({{ecef_path(tracks[0]), {105.0, 210.0}}, {ecef_path(tracks[1]), {85.0}}}, o, start, 1200, 0.5, 1.0, 3);
   auto spec = whitened_spectrogram(x);
   auto det = detect_events(spec);
   ASSERT_GE(det.events.size(), 2u);
@@ -408,8 +411,21 @@ TEST(AircraftSearch, FindsTheListenerFromTwoFlyovers) {
   SearchOptions so;
   so.start_min = start - 1800, so.start_max = start + 1800;
   so.box = {lon0 - 0.4, lat0 - 0.3, lon0 + 0.4, lat0 + 0.3};
+  const BladePassTable table = BladePassTable::builtin();  // not the cache's learned file
+  so.blade_pass = &table;
+  so.type_prior = false;
+  auto r0 = search(spec, det.events, split_tracks(tracks), terrain, so);
+  so.type_prior = true;
   auto r = search(spec, det.events, split_tracks(tracks), terrain, so);
+  std::printf("without the type prior:%s", render_result(r0, det.events).c_str());
+  std::printf("with the type prior:%s", render_result(r, det.events).c_str());
+  // The prior drops each decoy for the event it mimics, and the answer is unchanged.
+  EXPECT_EQ(r0.type_pairs, 0u);
+  EXPECT_GE(r.type_pruned_pairs, 2u);
+  EXPECT_LT(r.corridor_cells, r0.corridor_cells);
+  ASSERT_FALSE(r0.candidates.empty());
   ASSERT_FALSE(r.candidates.empty());
+  EXPECT_EQ(r0.candidates[0].combo, r.candidates[0].combo);
   const auto& c = r.candidates[0];
   EXPECT_LT(haversine_m(c.lat, c.lon, lat0, lon0), 150.0) << c.lat << ", " << c.lon;
   EXPECT_NEAR(c.start_utc, start, 0.5);
@@ -500,4 +516,62 @@ TEST(AircraftSearch, EditedRecordingClipsShareOnePlace) {
       const int clip = int(as_number(sp.at("clip")));
       EXPECT_NEAR(as_number(sp.at("utc0")) + 600.0 * clip, clip_start[clip], 0.5);
     }
+}
+TEST(AircraftBladePass, TypeTableAndHarmonics) {
+  const BladePassTable t = BladePassTable::builtin();
+  // PC-12: 4 blades at 1,700 rpm = 113.3 Hz (the reference flyover measured 113.8 Hz),
+  // and the detector locking onto half, twice or three times that.
+  EXPECT_TRUE(t.compatible("PC12", {113.8}));
+  EXPECT_TRUE(t.compatible("pc12", {56.9}));
+  EXPECT_TRUE(t.compatible("PC12", {227.6}));
+  EXPECT_TRUE(t.compatible("PC12", {341.4}));
+  EXPECT_FALSE(t.compatible("PC12", {80.0}));
+  // A weaker line at the fundamental is enough.
+  EXPECT_TRUE(t.compatible("PC12", {80.0, 113.0}));
+  // King Air 350 with the five-blade STC propeller at 1,562 rpm (the reference's 130.2 Hz).
+  EXPECT_TRUE(t.compatible("B350", {130.2}));
+  // Cessna 152: 2 blades and 4 cylinders, at most 2,750 rpm (92 Hz).
+  EXPECT_TRUE(t.compatible("C152", {80.0}));
+  EXPECT_FALSE(t.compatible("C152", {105.0, 210.0}));
+  // Unknown or empty types, and types left out on purpose (helicopters), never constrain.
+  EXPECT_TRUE(t.compatible("ZZZZ", {105.0}));
+  EXPECT_TRUE(t.compatible("", {105.0}));
+  EXPECT_TRUE(t.compatible("R44", {300.0}));
+  EXPECT_FALSE(t.known("R44"));
+  // Every seeded range is a plausible propeller tone.
+  for (auto& [type, p] : t.types())
+    for (auto& s : p.sources) {
+      EXPECT_GT(s.f_lo(), 40.0) << type;
+      EXPECT_LT(s.f_hi(), 250.0) << type;
+      EXPECT_LT(s.rpm_lo, s.rpm_hi) << type;
+    }
+}
+
+TEST(AircraftBladePass, LearnsFromConfirmedMatches) {
+  BladePassTable t = BladePassTable::builtin();
+  // A type absent from the table constrains once it has a few observations.
+  t.learn("XYZ1", 150.0);
+  t.learn("XYZ1", 151.0);
+  EXPECT_TRUE(t.compatible("XYZ1", {100.0}));
+  t.learn("XYZ1", 149.0);
+  EXPECT_TRUE(t.compatible("XYZ1", {150.5}));
+  EXPECT_TRUE(t.compatible("XYZ1", {75.0}));  // half
+  EXPECT_FALSE(t.compatible("XYZ1", {100.0}));
+  // An observation outside a seeded type's book range widens it.
+  EXPECT_FALSE(t.compatible("C152", {105.0}));
+  t.learn("C152", 105.0);
+  EXPECT_TRUE(t.compatible("C152", {105.0}));
+  // Round trip through the learned file's JSON.
+  BladePassTable u = BladePassTable::builtin();
+  u.merge_learned(parse_json(dump(t.learned_json())));
+  EXPECT_TRUE(u.compatible("C152", {105.0}));
+  EXPECT_FALSE(u.compatible("XYZ1", {100.0}));
+}
+
+TEST(AircraftBladePass, SameAircraftTonesAgree) {
+  EXPECT_TRUE(f0_consistent({113.8}, {114.9}));
+  EXPECT_TRUE(f0_consistent({113.8}, {227.0}));        // harmonic
+  EXPECT_TRUE(f0_consistent({113.8, 227.6}, {75.9}));  // a third of its harmonic
+  EXPECT_FALSE(f0_consistent({113.8}, {130.2}));       // the reference's two aircraft
+  EXPECT_TRUE(f0_consistent({}, {130.2}));
 }

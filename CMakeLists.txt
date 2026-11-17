@@ -75,6 +75,7 @@ add_library(geoloc_core STATIC
   src/air/adsb.cpp
   src/locate.cpp
   src/air/search.cpp
+  src/air/bladepass.cpp
   src/refs/parsers.cpp
   src/asio_impl.cpp
   src/refs/seismic_fetch.cpp

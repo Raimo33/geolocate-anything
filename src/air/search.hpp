@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "air/adsb.hpp"
+#include "air/bladepass.hpp"
 #include "air/doppler.hpp"
 #include "air/events.hpp"
 #include "air/terrain.hpp"
@@ -50,6 +51,12 @@ struct SearchOptions {
   bool silence_whole = false;               // over the whole recording (else between matched flyovers)
   double silence_factor = 1.0;              // unheard passes closer than this x max event slant range reject
   bool unknown_types = true;                // include aircraft of unknown type
+  // Rest-frequency prior (bladepass.hpp): a segment is a candidate for an event only if
+  // its type can make the event's tone; types outside the table always can.
+  bool type_prior = true;
+  PriorOptions prior;
+  const BladePassTable* blade_pass = nullptr;  // nullptr: the built-in table + learned observations
+  double same_aircraft_f0_tol = 0.05;          // one aircraft explaining two events: tones agree (or a simple ratio)
   double mic_height = 2.0;
   int top_k = 20;
   int max_scored = 1500;                    // survivors fully fitted at the cell centre (best by a quick fit)
@@ -89,6 +96,10 @@ struct SearchResult {
   std::vector<int> events_used;
   // Funnel counts.
   std::size_t segments = 0, corridor_cells = 0, consistent_cells = 0, silent_cells = 0, scored = 0;
+  // Rest-frequency prior: (segment, event) pairs passing the speed-independent checks
+  // (eligible type), those whose type cannot make the event's tone, and segments
+  // dropped for every event.
+  std::size_t type_pairs = 0, type_pruned_pairs = 0, type_pruned_segments = 0;
   bool terrain_complete = true;
   double seconds = 0;
   double cpu_corridors = 0, cpu_centre = 0;  // thread-seconds in the tile pass
