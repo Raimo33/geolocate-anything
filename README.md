@@ -302,6 +302,44 @@ start time and aircraft, and flags a clip that, searched alone, located elsewher
 
 ---
 
+## Getting started
+
+### Use the hosted dashboard
+
+A public instance runs at **<https://dashboard-production-00a6.up.railway.app>**: upload a
+recording and it runs the full analysis. It sleeps when idle, so the first request after a
+while takes a few seconds to wake it, and the first search after a wake also downloads its
+reference data.
+
+### Run it yourself
+
+With Docker (no toolchain needed):
+
+```bash
+git clone https://github.com/Raimo33/geolocate-anything.git && cd geolocate-anything
+docker build -t geoloc .
+docker run --rm -p 8000:8000 -v geoloc-data:/data geoloc                    # dashboard on http://127.0.0.1:8000
+docker run --rm -v geoloc-data:/data geoloc geoloc refs refresh --grid great_britain
+```
+
+From source on Ubuntu 24.04 (other systems: the packages listed under [Building](#building)):
+
+```bash
+sudo apt-get install -y clang-20 ninja-build cmake pkg-config ffmpeg \
+  libboost1.83-dev libcli11-dev libcurl4-openssl-dev libzstd-dev libfftw3-dev libarchive-dev \
+  libssl-dev zlib1g-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev libgtest-dev
+git clone https://github.com/Raimo33/geolocate-anything.git && cd geolocate-anything
+cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-20
+cmake --build build                                   # -> build/geoloc
+build/geoloc refs refresh --grid great_britain        # download one grid's reference data
+build/geoloc locate recording.mp4 --json report.json  # analyse a file
+build/geoloc serve                                    # dashboard on http://127.0.0.1:8000
+```
+
+A self-hosted copy downloads reference data from the public sources into its own cache
+(`~/.cache/geolocate-anything`, or `/data` in Docker); buckets and tokens are optional (see
+the environment variables below).
+
 ## Usage
 
 ```bash
