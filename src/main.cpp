@@ -355,7 +355,7 @@ int main(int argc, char** argv) {
   // serve
   auto* srv = app.add_subcommand("serve", "web dashboard: upload a file, see where and when on a map");
   std::string host = "127.0.0.1";
-  int port = std::stoi(env("PORT", "8000"));
+  int port = int(to_int(env("PORT")).value_or(8000));  // a malformed $PORT must not break every command
   srv->add_option("--host", host);
   srv->add_option("--port", port);
   srv->callback([&] { web::serve(host, port); });

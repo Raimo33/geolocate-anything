@@ -473,8 +473,6 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
   std::sort(order.begin(), order.end());
   std::vector<Event> ev;
   for (int i : order) ev.push_back(all_events[std::size_t(i)]), res.events_used.push_back(i);
-  // Reference: each event's straight-pass fit over all its lines, on the same scale as
-  // the trajectory scores (sum over lines of the per-line score / sqrt(lines)).
   // Reference: each event's ridge score along its best straight pass (tc and rest
   // frequency polished), the scale of the trajectory scores' fit ratios.
   for (auto& e : ev) {

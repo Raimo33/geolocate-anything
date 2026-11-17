@@ -78,6 +78,7 @@ std::map<std::string, std::string> parse_list_objects(const std::string& xml, st
     auto a = xml.find("<Contents>", pos);
     if (a == std::string::npos) break;
     auto b = xml.find("</Contents>", a);
+    if (b == std::string::npos) break;  // a cut-off listing: no partial last entry
     std::string_view item(xml.data() + a, b - a);
     std::size_t p = 0;
     std::string key = tag(item, "Key", p);

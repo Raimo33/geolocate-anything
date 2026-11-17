@@ -77,19 +77,7 @@ static std::string md5_hex(std::string_view data) {
   return s;
 }
 
-std::string md5_file(const std::string& path) {
-  MappedFile mf(path);
-  unsigned char d[EVP_MAX_MD_SIZE];
-  unsigned int n = 0;
-  EVP_Digest(mf.bytes().data(), mf.bytes().size(), d, &n, EVP_md5(), nullptr);
-  static const char* hex = "0123456789abcdef";
-  std::string s;
-  for (unsigned i = 0; i < n; ++i) {
-    s += hex[d[i] >> 4];
-    s += hex[d[i] & 15];
-  }
-  return s;
-}
+std::string md5_file(const std::string& path) { return md5_hex(MappedFile(path).view()); }
 
 std::map<std::string, std::string> parse_list_objects(const std::string& xml, std::string& next_token, std::map<std::string, double>* modified) {
   return net::s3::parse_list_objects(xml, next_token, modified);

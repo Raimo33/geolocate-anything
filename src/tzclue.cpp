@@ -256,6 +256,7 @@ Result infer(const audio::FileClues& c, std::optional<std::string> grid, double 
   const bool have_hum = std::isfinite(start_utc);
   const double end_utc = start_utc + (std::isfinite(duration_s) ? duration_s : 0);
   double explicit_at = NAN;
+  const std::vector<int> in_use = have_hum ? offsets_in_use(start_utc) : std::vector<int>{};
 
   for (auto& s : stamps(c)) {
     Evidence e{s.key, s.raw, s.kind, std::nullopt, NAN, false, {}};
@@ -282,7 +283,7 @@ Result infer(const audio::FileClues& c, std::optional<std::string> grid, double 
       int best_o = 0;
       double best_r = INFINITY;
       for (double d : {s.w.naive() - start_utc, s.w.naive() - end_utc})
-        for (int o : offsets_in_use(start_utc))
+        for (int o : in_use)
           if (const double res = std::fabs(d - o); res < best_r) best_r = res, best_o = o;
       e.residual_s = best_r;
       if (best_r > TOLERANCE_S) {

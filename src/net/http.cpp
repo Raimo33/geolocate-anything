@@ -276,6 +276,7 @@ asio::awaitable<Response> Http::fetch(Request req) {
 asio::awaitable<Response> Http::get(std::string url, int retries, long total_timeout_s) {
   std::string last;
   for (int attempt = 0; attempt < retries; ++attempt) {
+    if (attempt) co_await sleep_for(double(1 << attempt));
     Request rq;
     rq.url = url;
     rq.total_timeout_s = total_timeout_s;
@@ -283,7 +284,6 @@ asio::awaitable<Response> Http::get(std::string url, int retries, long total_tim
     if (r.ok()) co_return r;
     last = r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error;
     if (r.error.empty() && r.status >= 400 && r.status < 500 && r.status != 429 && r.status != 408) break;  // won't change
-    co_await sleep_for(double(2 << attempt));
   }
   throw std::runtime_error("download failed: " + url + ": " + last);
 }
@@ -322,9 +322,8 @@ asio::awaitable<void> AsyncSemaphore::acquire() {
 
 void AsyncSemaphore::release() {
   if (!waiters_.empty()) {
-    auto ev = waiters_.front();
-    waiters_.erase(waiters_.begin());
-    ev->set();
+    waiters_.front()->set();
+    waiters_.pop_front();
   } else {
     ++free_;
   }

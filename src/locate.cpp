@@ -408,7 +408,10 @@ static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
     }
     match::SearchOptions so;
     so.from = i64(c.start_utc - hc.window_s), so.to = i64(c.start_utc + hc.window_s), so.top_k = 30;
-    auto gr = match::search_grid(*rep.trace, *p.grid, so);
+    // The span overload returns a note where the single-trace one throws (a trace with too
+    // few valid frames): the check must not fail the whole analysis.
+    const ENFTrace* tr = &*rep.trace;
+    auto gr = std::move(match::search_grid(std::span<const ENFTrace* const>(&tr, 1), *p.grid, so)[0]);
     if (gr.n_lags == 0) hc.note = gr.note.empty() ? "no reference data around this time" : gr.note;
     for (std::size_t i = 0; i < gr.candidates.size(); ++i)
       if (std::abs(gr.candidates[i].start_utc - c.start_utc) <= 3.0) {
@@ -427,10 +430,7 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
   Report rep;
   rep.path = path;
   rep.clues = audio::file_clues(path);
-  audio::Audio au;
-  {
-    au = audio::load_audio(path);
-  }
+  const auto au = audio::load_audio(path);
   const double rate = au.rate;
   const auto max_hz = enf::nyquist_limit(au.source_rate);
   rep.duration_s = au.duration();
@@ -441,13 +441,9 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
     if (!whole) whole = enf::Spectrum::of(au.samples, rate);
     return *whole;
   };
-  {
-    std::cerr << "locate: audio decoded (" << rep.duration_s << " s), detecting hum" << std::endl;
-    rep.hum = enf::detect_hum(au.samples, rate, &whole_spec(), dop);
-  }
-  if (o.split && (o.nominal || rep.hum.nominal)) {
-    rep.cuts = cuts::clean_cuts(rep.duration_s, cuts::detect_cuts(au.samples, rate, rep.hum));
-  }
+  std::cerr << "locate: audio decoded (" << rep.duration_s << " s), detecting hum" << std::endl;
+  rep.hum = enf::detect_hum(au.samples, rate, &whole_spec(), dop);
+  if (o.split && (o.nominal || rep.hum.nominal)) rep.cuts = cuts::clean_cuts(rep.duration_s, cuts::detect_cuts(au.samples, rate, rep.hum));
 
   if (rep.cuts.empty()) {
     Work w = prepare(whole_spec(), rep.hum, o);
@@ -659,7 +655,8 @@ std::string render_text(const Report& rep) {
     L.emplace_back("");
     L.emplace_back("== Metadata vs. hum");
     for (auto& cl : rep.consistency) L.push_back("  " + cl);
-  }  if (rep.aircraft) {
+  }
+  if (rep.aircraft) {
     L.emplace_back("");
     std::string a = air::render_stage(*rep.aircraft);
     while (!a.empty() && a.back() == '\n') a.pop_back();

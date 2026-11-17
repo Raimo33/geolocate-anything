@@ -102,12 +102,11 @@ void NesoParser::line(std::string_view l) {
   if (!(std::fabs(dev) < 3.0)) dev = NAN;  // junk (a 0 or a blank) is no data, not -3.3 Hz
   if (style_ == 0) {
     style_ = t.size() > 2 && t[2] == '/' ? 2 : 1;
+    acc_.emplace(t0_ - SPILL_S, t1_ + SPILL_S);
     if (style_ == 1) {
-      acc_.emplace(t0_ - SPILL_S, t1_ + SPILL_S);
       zone = plain_offset_s_ ? "plain times, UTC+1 (BST) throughout the file, converted to UTC"
                              : "ISO times: an explicit UTC offset, or plain times in UTC";
     } else {
-      acc_.emplace(t0_ - SPILL_S, t1_ + SPILL_S);
       tz_.emplace("Europe/London");
       zone = "Europe/London wall-clock time (dd/mm/yyyy files), converted to UTC";
     }

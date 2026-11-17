@@ -106,7 +106,7 @@ class AsyncSemaphore {
  private:
   asio::any_io_executor ex_;
   int free_;
-  std::vector<std::shared_ptr<AsyncEvent>> waiters_;
+  std::deque<std::shared_ptr<AsyncEvent>> waiters_;
 };
 
 // Run `fn` (a coroutine) over items with at most `parallel` in flight. Every item is

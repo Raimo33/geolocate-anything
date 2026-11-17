@@ -17,9 +17,7 @@ namespace geo::refs::detail {
 
 void log(const std::string& msg) { std::cerr << msg << std::endl; }
 
-
 std::string now_month() { return month_key(static_cast<i64>(now_seconds())); }
-
 
 json::array to_json_array(const std::vector<json::object>& v) {
   json::array a;
@@ -38,6 +36,7 @@ fs::path tmp_dir() {
 asio::awaitable<void> download_to(Ctx& c, const std::string& url, const fs::path& dst) {
   std::string last;
   for (int attempt = 0; attempt < 3; ++attempt) {
+    if (attempt) co_await net::sleep_for(double(1 << attempt));
     fs::path tmp = dst;
     tmp += ".part";
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
@@ -57,7 +56,6 @@ asio::awaitable<void> download_to(Ctx& c, const std::string& url, const fs::path
     fs::remove(tmp, ec);
     last = r.ok() ? "cannot write " + tmp.string() : r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error;
     if (r.error.empty() && r.status >= 400 && r.status < 500 && r.status != 429) break;
-    co_await net::sleep_for(double(2 << attempt));
   }
   throw std::runtime_error("download failed: " + url + ": " + last);
 }
@@ -165,7 +163,6 @@ asio::awaitable<std::map<std::string, std::string>> cached_index(Ctx& c, const c
 
 // ---------------------------------------------------------------- shared multi-month files
 
-
 // Loads (3 attempts; Unavailable is final) or waits for the load already running.
 asio::awaitable<std::shared_ptr<SharedFile>> shared_file(Ctx& c, const std::string& key, const Loader& load) {
   if (auto it = c.files.find(key); it != c.files.end()) {
@@ -178,6 +175,7 @@ asio::awaitable<std::shared_ptr<SharedFile>> shared_file(Ctx& c, const std::stri
   c.files[key] = s;
   std::string last;
   for (int attempt = 0; attempt < 3 && !s->error; ++attempt) {
+    if (attempt) co_await net::sleep_for(double(1 << attempt));
     try {
       s->months.clear();
       co_await load(c, *s);
@@ -188,7 +186,6 @@ asio::awaitable<std::shared_ptr<SharedFile>> shared_file(Ctx& c, const std::stri
     } catch (const std::exception& ex) {
       last = ex.what();
     }
-    if (!s->error) co_await net::sleep_for(double(2 << attempt));
   }
   if (!s->error) s->error = std::make_exception_ptr(std::runtime_error(key + ": " + last));
   s->ready.set();

@@ -21,6 +21,7 @@ std::optional<std::string> read_file(const fs::path& p) {
   char buf[1 << 16];
   for (;;) {
     ssize_t n = ::read(fd, buf, sizeof buf);
+    if (n < 0 && errno == EINTR) continue;
     if (n < 0) {
       ::close(fd);
       return std::nullopt;

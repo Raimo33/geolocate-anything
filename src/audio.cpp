@@ -435,7 +435,7 @@ Audio load_audio(const std::string& path, int rate, int threads) {
     buf.resize(std::size_t(max_out));
     auto* o = reinterpret_cast<uint8_t*>(buf.data());
     int n = swr_convert(swr.p, &o, max_out, fr ? const_cast<const uint8_t**>(fr->extended_data) : nullptr, fr ? fr->nb_samples : 0);
-    for (int i = 0; i < n; ++i) s.push_back(buf[std::size_t(i)]);
+    if (n > 0) s.insert(s.end(), buf.begin(), buf.begin() + n);
   };
 
   // Chunk boundaries in the stream's time base. PCM decodes faster than it reads, and a

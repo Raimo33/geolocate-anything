@@ -220,6 +220,13 @@ const Entry* Archive::find_if(const std::function<bool(const Entry&)>& f) const 
 asio::awaitable<std::string> Remote::range(std::uint64_t a, std::uint64_t b) {
   std::string last;
   for (int attempt = 0; attempt < 4; ++attempt) {
+    if (attempt) {  // network hiccup or an expired signed URL: resolve again and retry
+      co_await net::sleep_for(double(1 << attempt));
+      try {
+        co_await open();
+      } catch (...) {
+      }
+    }
     net::Request rq;
     rq.url = resolved_.empty() ? url_ : resolved_;
     rq.range = std::pair{a, b - 1};
@@ -227,12 +234,6 @@ asio::awaitable<std::string> Remote::range(std::uint64_t a, std::uint64_t b) {
     auto r = co_await http_.fetch(std::move(rq));
     if (r.status == 206 && r.body.size() == b - a) co_return std::move(r.body);
     last = r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error;
-    // Network hiccup or an expired signed URL: resolve again and retry.
-    co_await net::sleep_for(double(2 << attempt));
-    try {
-      co_await open();
-    } catch (...) {
-    }
   }
   throw std::runtime_error("range read failed: " + url_ + ": " + last);
 }

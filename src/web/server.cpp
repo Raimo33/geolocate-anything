@@ -591,6 +591,7 @@ asio::awaitable<Upload> receive_upload(beast::tcp_stream& stream, beast::flat_bu
   }
   out.close();
   if (!file || filename.empty()) throw std::runtime_error("no file uploaded");
+  if (!out) throw std::runtime_error("cannot store the upload (disk full?)");  // never analyse a truncated copy
   Upload up;  // (not braced: GCC 15 has an internal error on braced lists near co_await/co_return)
   up.file.emplace(std::move(*file));
   up.filename = std::move(filename);

@@ -85,7 +85,7 @@ void put(std::string& out, const json::value& v, const DumpOptions& o, int depth
     out += '\n';
     out.append(static_cast<std::size_t>(o.indent * d), ' ');
   };
-    const char* key_sep = o.indent < 0 ? ":" : ": ";
+  const char* key_sep = o.indent < 0 ? ":" : ": ";
   switch (v.kind()) {
     case json::kind::null: out += "null"; break;
     case json::kind::bool_: out += v.get_bool() ? "true" : "false"; break;

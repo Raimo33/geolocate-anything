@@ -667,6 +667,7 @@ ENFTrace extract_enf(const Spectrum& spec, const HumDetection& det, const Extrac
   std::vector<HarmonicStat> usable;
   for (auto& h : pool)
     if (std::find(chosen.begin(), chosen.end(), h.harmonic) != chosen.end()) usable.push_back(h);
+  if (usable.empty()) throw std::invalid_argument("no usable harmonic of " + std::to_string(nom) + " Hz in the recording's band");
 
   std::vector<double> combined(n_frames * K, 0.0);
   double wsum = 0;

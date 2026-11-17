@@ -1229,6 +1229,7 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
         net::Http http(io);
         auto exists = [&](const std::string& url) -> net::asio::awaitable<bool> {
           for (int attempt = 0;; ++attempt) {
+            if (attempt) co_await net::sleep_for(double(1 << attempt));
             auto r = co_await http.fetch({.url = url, .method = "HEAD"});
             if (r.ok()) co_return true;
             if (r.status == 404) co_return false;

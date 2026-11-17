@@ -263,8 +263,7 @@ static void merge_month(const std::string& grid, const std::string& source, cons
     i64 s = std::max(a, c0), e = std::min(a + i64(seg.size()), c1);
     if (s < e) {
       auto part = seg.subspan(std::size_t(s - a), std::size_t(e - s));
-      if (replace ? !blob.empty() || std::any_of(part.begin(), part.end(), [](auto c) { return c != codec::MISSING; })
-                  : std::any_of(part.begin(), part.end(), [](auto c) { return c != codec::MISSING; })) {
+      if ((replace && !blob.empty()) || std::any_of(part.begin(), part.end(), [](auto c) { return c != codec::MISSING; })) {
         cur.assign(std::size_t(c1 - c0), codec::MISSING);
         if (old && !blob.empty()) old->chunk(std::size_t(i), cur);
         nw = cur;
@@ -328,21 +327,21 @@ void write_entry(const std::string& grid, const std::string& source, const std::
   // What the month holds now: this write, plus hours spilled in from its neighbours.
   const double coverage = stored_coverage(grid, source, month);
   update_manifest(grid, source, [&](json::object& man) {
-  json::object& mm = man["meta"].is_object() ? man["meta"].get_object() : (man["meta"] = json::object()).get_object();
-  for (auto& kv : meta)
-    if (kv.key() != "url" && kv.key() != "files" && kv.key() != "partial" && kv.key() != "format" && kv.key() != "retry_chunks" &&
-        kv.key() != "fetched_to")
-      mm[kv.key()] = kv.value();
-  json::object entry;
-  entry["coverage"] = coverage;
-  entry["stored_at"] = now_isoformat();
-  entry["format"] = jint(meta, "format", 1);
-  for (const char* k : {"url", "files", "retry_chunks", "fetched_to"})  // the last two: what a partial month still lacks
-    if (auto* v = meta.if_contains(k)) entry[k] = *v;
-  if (jbool(meta, "partial")) entry["partial"] = true;
-  if (!man["months"].is_object()) man["months"] = json::object();
-  man["months"].get_object()[month] = std::move(entry);
-  if (auto* un = man.if_contains("unavailable"); un && un->is_object()) un->get_object().erase(month);
+    json::object& mm = man["meta"].is_object() ? man["meta"].get_object() : (man["meta"] = json::object()).get_object();
+    for (auto& kv : meta)
+      if (kv.key() != "url" && kv.key() != "files" && kv.key() != "partial" && kv.key() != "format" && kv.key() != "retry_chunks" &&
+          kv.key() != "fetched_to")
+        mm[kv.key()] = kv.value();
+    json::object entry;
+    entry["coverage"] = coverage;
+    entry["stored_at"] = now_isoformat();
+    entry["format"] = jint(meta, "format", 1);
+    for (const char* k : {"url", "files", "retry_chunks", "fetched_to"})  // the last two: what a partial month still lacks
+      if (auto* v = meta.if_contains(k)) entry[k] = *v;
+    if (jbool(meta, "partial")) entry["partial"] = true;
+    if (!man["months"].is_object()) man["months"] = json::object();
+    man["months"].get_object()[month] = std::move(entry);
+    if (auto* un = man.if_contains("unavailable"); un && un->is_object()) un->get_object().erase(month);
   });
 }
 
