@@ -242,9 +242,7 @@ start time and aircraft, and flags a clip that, searched alone, located elsewher
 ### Use the hosted dashboard
 
 A public instance runs at **<https://dashboard-production-00a6.up.railway.app>**: upload a
-recording and it runs the full analysis. It sleeps when idle, so the first request after a
-while takes a few seconds to wake it, and the first search after a wake also downloads its
-reference data.
+recording and it runs the full analysis.
 
 ### Run it yourself
 
