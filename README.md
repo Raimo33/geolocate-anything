@@ -337,6 +337,10 @@ spreads its blocks over them (~30 MB each), long compressed audio is decoded and
 resampled in 30 s chunks on them (the same samples as one pass), and the faint-hum
 ridge test scores its off-grid nulls on them.
 
+On Railway the dashboard sleeps when idle (`sleepApplication` in `railway.json`) and wakes
+on the next request. To keep crawlers from waking it, `serve` answers `/robots.txt` with
+`Disallow: /` and sends `X-Robots-Tag: noindex, nofollow, noarchive` on every response.
+
 ## Building
 
 Requires a C++23 compiler with `#embed` (GCC 15 or Clang 19+), CMake ≥ 3.25, and Boost (Asio, Beast,

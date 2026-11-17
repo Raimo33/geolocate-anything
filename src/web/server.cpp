@@ -747,6 +747,9 @@ asio::awaitable<void> session(App& app, tcp::socket sock) {
         const Req req = Req::of(m);
         if (target == "/" && m.method() == http::verb::get) {
           res = asset(req, app.page, false);
+        } else if (target == "/robots.txt") {
+          // Keep crawlers off: each request would wake the sleeping Railway service.
+          res = make(req, http::status::ok, "User-agent: *\nDisallow: /\n", "text/plain");
         } else if (target == "/api/grid-areas") {
           res = asset(req, app.areas, true);
         } else if (target == "/api/tz-areas") {
@@ -766,6 +769,7 @@ asio::awaitable<void> session(App& app, tcp::socket sock) {
           res = make(req, http::status::not_found, "Not Found", "text/plain");
         }
       }
+      res.set("X-Robots-Tag", "noindex, nofollow, noarchive");
       res.keep_alive(keep && res.keep_alive());
       stream.expires_after(std::chrono::seconds(120));
       co_await http::async_write(stream, res, asio::use_awaitable);
