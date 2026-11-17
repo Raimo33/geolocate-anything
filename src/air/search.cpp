@@ -44,13 +44,13 @@ struct Seg {
   double vlo = 0, vhi = INFINITY;  // bounds of the curve's speed
 };
 
-// Bounds of a Hermite path (path_bounds), from its nodes alone. Between nodes a and b (h apart) the
-// curve is p0 + h01 (p1 - p0) + h (h10 v0 + h11 v1), |h10|, |h11| <= 4/27: within
-// (4/27) h (|v0| + |v1|) of the chord. Its velocity is (1 - s) v0 + s v1 +
-// 6 s (1 - s) (c - (v0 + v1) / 2), c the chord velocity: within 1.5 |c - (v0 + v1) / 2| of
-// the segment from v0 to v1.
 }  // namespace
 
+// From the nodes alone. Between nodes a and b (h apart) the curve is
+// p0 + h01 (p1 - p0) + h (h10 v0 + h11 v1), |h10|, |h11| <= 4/27: within
+// (4/27) h (|v0| + |v1|) of the chord. Its velocity is (1 - s) v0 + s v1 +
+// 6 s (1 - s) (c - (v0 + v1) / 2), c the chord velocity: within 1.5 |c - (v0 + v1) / 2|
+// of the segment from v0 to v1.
 PathBounds path_bounds(const Path& path) {
   const auto& pts = path.points();
   double south = 90, north = -90, west = 180, east = -180, grow = 0, vlo = INFINITY, vhi = 0;

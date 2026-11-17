@@ -64,6 +64,7 @@ video's hand measurements were 130–154 m/s, 4.3–7.8 km and 88–110 m/s, 1.4
 | **Missing types from tar1090-db's registry** (`aircraft.csv.gz`, 645k aircraft) | 40% of traces carry no type. Before this, two of the ten best wrong answers on the reference case were business jets (an Embraer Phenom 300, a Citation XLS) of unknown type. Unknown types are still kept (`--known-types` drops them). |
 | **Altitude above the ellipsoid**: GNSS altitude where reported; else barometric + that aircraft's median geometric−barometric offset; else + the median offset of all aircraft in its 2° × 2° × 3 h cell | Pressure altitude is off by the day's pressure deviation (hundreds of feet). On 2026-09-08: 34.4M geometric fixes, 0.24M corrected per aircraft, 1.25M per region, 0.02M left raw. |
 | **Store** (v3): one file per day, per-aircraft zstd blobs of *trajectory nodes* + an index (aircraft, type, bounding box, time span) zstd-compressed at the end | A search reads the index and decompresses only aircraft whose box and time overlap. Fixes are not kept: the search reads a flight as a cubic Hermite curve through positions and velocities, so the store keeps that curve's nodes. Spikes (bad decodes, baro glitches) are dropped, each fix is smoothed (quadratic least squares over ±6 s, positions and reported velocities), and from each node the next is the farthest fix whose curve stays within 25 m horizontally, 15 m vertically and 5/3 m/s of every smoothed fix between (≤ 100 s apart; leg starts and gaps always split). Nodes sit on whole seconds; velocity (0.5 m/s) and position (5e-5°, 4 m) are coded as integer residuals from the previous nodes (velocity extrapolated, position moved by the trapezoid of the velocities) in 16-bit byte planes, zstd 19: 5.7 B a node. 2026-09-08: 36.9M fixes → 8.5M nodes, **48 MB** (v1 0.68 GB, v2 ~0.22 GB); 2026-11-12: 33.0M fixes, 41 MB. Against the raw fixes the curve is within 11 m (median) / 31 m (95%) and 0.7 / 5 m/s radial velocity: the raw fixes' own disagreement between reported velocity and position. Coarser tolerances gain little (50 m: −20%); larger zstd frames 5%, velocity from node positions instead of stored: worse. Older stores are not read (a volume's are deleted and fetched again). |
+| **Chunk index** (sidecar `adsb/<day>.idx`, not a store version): per aircraft, its nodes in 10-minute slots, each slot's box (0.01°, rounded outwards) and node speed range (1 m/s); columnar, zstd 19 | `load_tracks` decompresses an aircraft only if a slot within 120 s of the window has a node in the box (the segments it would yield need two such nodes 120 s apart at most, so the result is the same), and, given a speed range, a node at that speed. Built from the store alone: at ingest, on first use when missing or stale (it records the store's size and tail), or with `geoloc aircraft index [DAY...]`, so the bucket's ~1,350 v3 days need no rebuild and no new download (3 s a day; 1,350 days ≈ 70 min on 4 threads, or lazily as days are used). 2026-09-08: 35,129 aircraft, 448,527 slots, **2.8 MB (5.8% of the store)**. Not uploaded: a server rebuilds it the first time a day is used. Aircraft decompressed, before → after: the US in 3° regions over a whole day 84,265 → 61,429 (73%); the US Eastern extent around the hum's second 6,733 → 5,252 (78%); Long Island then 494 → 278 (56%). With the event speeds (72–178 m/s) as well, about 42% of the region loads remain, but the search does not filter by speed when loading: the silence stage needs aircraft of every speed (it skips the others itself, by their segment bounds). Loading is a few seconds of a large search either way. |
 | **Aircraft bucket** (`GEOLOC_AIRPLANE_BUCKET`, apart from the grid bucket): `adsb/<day>.trk` + `adsb/<day>.cov` | All of ADSB.lol's history (~1,350 days, ~65 GB) is built offline (`aircraft fetch 2023-03-01..YESTERDAY --push --drop`, ~3 min a day, download-bound) and kept there. A server's volume holds every day's coverage sidecar (pulled on start, for the map) and only the stores its analyses used last (`GEOLOC_AIRPLANE_KEEP_DAYS`), each downloaded on first use. The dashboard's **Fetch the latest data** (admin, `POST /api/adsb-refetch {"latest": true}`) fetches whichever of the last 7 UTC days are missing and uploads them (`{"day": D}` still rebuilds one day with `--force`). |
 | **Segments**: split at readsb leg starts and gaps > 120 s | No interpolation across gaps. |
 
@@ -81,7 +82,7 @@ reader (deflate, floating-point predictor, tiled or stripped) avoids a GDAL depe
 | Stage | What | Cost on the reference case (Long Island box, whole day) |
 |---|---|---|
 | Rest-frequency prior | A segment stays a candidate for an event only if its type can make the event's tone: blade pass (RPM × blades / 60) or, for direct-drive pistons, firing frequency, over the type's RPM range from descent to take-off, the event's f0 tried as ½, 1, 2 or 3 × that, ± 4% ([blade-pass.md](blade-pass.md)). Types not in the table (unknown, helicopters, geared engines) always stay. One aircraft explaining two events must have agreeing tones (± 5%, or a simple ratio). | see below |
-| Corridors | Per event, each flight segment flying within the event's speed range (± 12 m/s) in the window is cut in 4 s pieces; each piece writes its closest slant distance into the 200 m cells of its slab (cells whose foot falls in the piece, within reach of the slant range). Per (segment, cell), the minimum; minima at a segment end are not closest approaches. | 3,042 segments → 358k cells, 62 cpu-s |
+| Corridors | Per event, each flight segment flying within the event's speed range (± 12 m/s) in the window is cut in 4 s pieces; each piece writes its closest slant distance into the 200 m cells of its slab (cells whose foot falls in the piece, within reach of the slant range). Per (segment, cell), the minimum; minima at a segment end are not closest approaches. With ≥ 2 flyovers required, **pair-first** (below) rasterizes only where pieces of enough events can meet. | 3,042 segments → 358k cells, 62 cpu-s (pair-first: 161k cells) |
 | One clock | Each (cell, segment) entry implies an interval for the recording's start (CPA reception time − the event's CPA time ± its range ± 4 s). A cell survives if entries for ≥ `min_events` events share an interval. Subsets of the events are tried: clutter stays unmatched. | → 54k cells |
 | Silence | Another aircraft passing closer than the matched flyovers' own slant range, between the first and last matched flyover, at a time no flyover was detected, would have been heard: the cell goes. | → 12k cells |
 | Exact curves | Each matched segment's curve is modelled for the listener (emission time solved), tabulated against absolute time, and scored against the spectrogram: one start time swept for all events, each event's rest frequency swept on its own (± 2%). A quick brightness fit ranks every survivor, a full fit the best 1,500 at the cell centre, then the best 300 on a 100 m sub-grid; the final fine pass scores on ridges. | 88 cpu-s + 12 s |
@@ -91,6 +92,71 @@ A combination of flights usually survives in a corridor of thousands of contiguo
 cells whose scores vary smoothly: the quick fit takes every third cell each way, then
 the 5 × 5 neighbourhoods of the best four (centre scoring 88 → 23 cpu-s on the
 reference case, same answer).
+
+### Large areas: pair-first corridors and segment bounds
+
+Over a day and a continent nearly every cell lies in some event's corridor (181M
+cells for the US), but a survivor needs entries of ≥ `min_events` events whose start
+intervals meet, and the recording fixes the gaps between those events' CPAs. So, per
+0.25° tile and before rasterizing:
+
+1. **Pieces as intervals and footprints.** Each 4 s piece within reach of the tile gets
+   the start interval any of its entries could imply
+   (`[ta + d_lo/c − tc_hi − 4 s, tb + d_hi/c − tc_lo + 4 s]`, clipped to the window) and
+   the rows and longitudes of the cells it can write.
+2. **Pairs.** Pieces of two events are partners when their intervals overlap and their
+   footprints share rows and longitudes (a sweep over the intervals sorted by start).
+3. **Pruning.** A piece needs kept partners in ≥ `min_events` − 1 other events, else it
+   is not rasterized; repeated until stable (a dropped piece is no one's partner). This
+   holds for every subset of the events the one-clock stage tries, so clutter stays
+   unmatched as before.
+4. **Masks.** A kept piece writes a cell only if kept partners of ≥ `min_events` − 1
+   other events also cover it (the same row/column test the rasterizer uses; skipped
+   above 64 partners, where it would cost more than it saves).
+5. **Exact entries.** Dropping pieces can only raise a (segment, cell) minimum, so in
+   every cell that still holds entries of ≥ `min_events` events each entry is
+   recomputed over all of its segment's pieces. The piece that holds a combination's
+   true minimum always has the combination's other pieces as partners covering that
+   cell, so every surviving combination is found with its exact entry, and no other.
+
+The one-clock, silence and scoring stages therefore see the same cells and entries as
+before (the unit test checks cells, places, starts and scores against the full
+rasterization). With one flyover (the hum's second) every piece stands alone and
+the stage is skipped.
+
+**Segment bounds.** From its nodes alone each segment gets a box that holds its whole
+Hermite curve (within (4/27)·h·(|v₀| + |v₁|) of each chord) and bounds on its speed
+(the velocity is the interpolated node velocity ± 1.5 |chord velocity − mean node
+velocity|). Segments never at an event's speed are not cut into pieces at all, and the
+silence stage cuts only segments whose box comes within reach of the tile; it also
+rasterizes only the columns of each row that hold survivor cells. All three skip only
+work that changes nothing (`segment_bounds = false` turns them off, as the test does).
+
+Measured (4 threads; ADS-B of 2026-09-08; offline, so ground at the geoid; before the
+rest-frequency prior was merged). colsto's audio was not reachable from this
+environment, so the recording is synthetic: one hour rendered at the reference place
+(40.87621, −73.52335, start 20:17:30 UTC) from the real tracks of N22NY (113.8 Hz +
+harmonic) and N93CQ (130.2 Hz) in white noise; the detector finds their CPAs at
+2157.3 s and 3076.0 s (the real recording's 2154.4 and 3075.8 s) as the two strongest
+of 12 detections, the others side-lobes of those two, which serve as clutter. "Same"
+means all 20 candidates (place, start, flights per event) are identical; the funnel
+after the corridors is identical in every case.
+
+| Case | Before | After |
+|---|---|---|
+| Synthetic unit test (two flyovers, decoys; with the prior) | 75,866 corridor cells → 386 → 386 | **8,665** (2,050 of 4,047 pieces) → 386 → 386; every later count, place, start and score bit-identical (the test checks) |
+| Long Island box (−74.2..−72.5, 40.5..41.4), whole day, 2 flyovers | 3,385 segments → **356,924** corridor cells → 63,467 one clock → 16,095 silent; corridors + silence 13 cpu-s; 2:08, 0.98 GB | **161,231** cells (72k of 280k pieces rasterized) → 63,467 → 16,095; 7 cpu-s; 2:06, **0.60 GB**; same |
+| Same, ± 2 h, 3 events (one clutter) | 356,924 → 95,888 → 64,981; 10 cpu-s; 6:35, 0.68 GB | 295,512 → 95,888 → 64,981; 9 cpu-s; 6:26, 0.54 GB; same, clutter unmatched |
+| Northeast (−80..−68, 38..47, 12 regions), whole day | 27,397 segments → **17.5M** → 379,620 → 206,794; corridors + silence 114 cpu-s; 14:23, 1.07 GB | **1.26M** (11% of 3.4M pieces) → 379,620 → 206,794; 34 cpu-s (pairing 3); 14:19, **0.62 GB**; same (the reference place #1, lead 3%) |
+| US Eastern extent (−98..−55, 24..55) at the hum's second ± 3 s, 1 flyover | 8,528 segments → 250,018 cells; corridors 9 cpu-s; 4:47, 0.59 GB | pair-first not used (one flyover); segment bounds: 1 cpu-s; 4:44, 0.55 GB; same (strong) |
+| Continental US (−125..−66, 24..50), whole day, 2 flyovers (with the prior) | documented run on the real audio, 12 threads: 171k segments → **181M** → 1.4M → 0.86M; 2 h 41 min, 2.2 GB | 176,029 segments → **5.41M** (1.8M of 21.6M pieces) → 1.32M → 835k; corridors + silence 147 cpu-s (pairing 12, silence 34), centre scoring 10,934 cpu-s; **57 min on 4 threads, 0.67 GB**; the reference place #1 (lead 3%: this clean synthetic audio fits better than the real, which ranked it #3) |
+
+What remains is centre scoring (the quick fit of every survivor: 2,700 of the
+Northeast's ~2,850 cpu-s, 995 of the hum-second run's), untouched here. Its cost per
+cell depends on the events' scoring windows (this recording's reach the 60 s cap), so
+on the real audio, where the documented Long Island run spent 23 cpu-s on 12k cells,
+the corridor and silence stages are a larger share. Loading tracks is small either way
+(0.4 s for the Long Island region with its index, 1.9 s for the 12 Northeast regions).
 
 Large boxes are searched in 3° regions, one at a time (memory stays near 2 GB for the
 whole US). Each region's refinement budget is the global one divided by the number of

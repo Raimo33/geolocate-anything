@@ -247,7 +247,9 @@ are far below what anyone notices, pass through walls and survive phone codecs.
    at the right slant distance, whose type can make the flyover's tone: a propeller's
    blade-pass frequency (RPM × blades / 60) is nearly fixed per type, so a per-type table
    ([docs/aircraft/blade-pass.md](docs/aircraft/blade-pass.md)) drops, say, a Cessna 152
-   for a 114 Hz flyover (a PC-12's); unknown types are kept.
+   for a 114 Hz flyover (a PC-12's); unknown types are kept. With two or more flyovers,
+   only cells where flights for different flyovers overlap in space and in the start
+   time they imply are rasterized (the same survivors from a fraction of the cells).
 4. **One clock.** Cells where the flights' closest approaches are heard as far apart as
    the flyovers in the recording; subsets of the flyovers are tried, so clutter (boats,
    cars) stays unmatched.
@@ -322,11 +324,12 @@ geoloc serve                                    # web dashboard on http://127.0.
 | `geoloc aircraft events FILE [--json out]` | Flyovers in a recording (CPA time, speed, slant distance, rest frequency) |
 | `geoloc aircraft fetch DAY\|FIRST..LAST... [--push [--drop]] [--force] [--parts A B] [--bbox W,S,E,N]` | Store days of ADSB.lol history (non-jets), newest first; `--push` uploads each to the aircraft bucket (skipping days it holds), `--drop` then frees the local copy |
 | `geoloc aircraft push [DAY...]` \| `pull [DAY...]` | Sync ADS-B days with the aircraft bucket (`pull` alone: every day's coverage sidecar) |
+| `geoloc aircraft index [DAY...] [--force]` | Build stored days' chunk index (`<day>.idx`, ~3 MB, from the store alone; otherwise built on first use) |
 | `geoloc aircraft locate FILE --from ISO --to ISO --bbox W,S,E,N [--min-events N] [--no-type-prior] [--json out]` | Aircraft-only search (`--no-type-prior`: keep aircraft whose type cannot make a flyover's tone) |
 | `geoloc aircraft learn-f0 REPORT.json... [--min-level moderate] [--list]` | Add confirmed matches' rest frequencies to the per-type blade-pass table (`<cache>/adsb/blade_pass_learned.json`) |
 
 Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`); ADS-B
-days under `adsb/` there (~50 MB each), DEM tiles under `dem/`.
+days under `adsb/` there (~50 MB each, plus a ~3 MB chunk index `<day>.idx` built from it), DEM tiles under `dem/`.
 
 Environment (all optional): `GEOLOC_GRID_BUCKET` with `GEOLOC_S3_ENDPOINT_URL`, `GEOLOC_GRID_ACCESS_KEY_ID`,
 `GEOLOC_GRID_SECRET_ACCESS_KEY`, `GEOLOC_S3_REGION` mirrors the store to an S3 bucket (and
