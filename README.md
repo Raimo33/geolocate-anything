@@ -392,4 +392,4 @@ a fresh build directory or a branch switch recompiles only what changed.
 
 ## License
 
-MIT.
+MIT, see [LICENSE](LICENSE).
