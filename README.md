@@ -61,19 +61,20 @@ recording and it runs the full analysis.
 
 ### Run it yourself
 
-With Docker:
+Run the same dashboard locally with Docker:
 
 ```bash
 git clone https://github.com/Raimo33/geolocate-anything.git && cd geolocate-anything
 docker build -t geoloc .
-docker run --rm -p 8000:8000 -v geoloc-data:/data geoloc                    # dashboard on http://127.0.0.1:8000
-docker run --rm -v geoloc-data:/data geoloc geoloc refs refresh --grid great_britain
+docker run --rm -p 8000:8000 -v geoloc-data:/data geoloc
 ```
 
-A self-hosted copy downloads reference data from the public sources into its own cache
-(the `geoloc-data` volume). Buckets and tokens are optional.
+Open <http://127.0.0.1:8000>, click **Fetch the latest data** to download the grids'
+reference data from the public sources (kept in the `geoloc-data` volume), then upload a
+recording. Buckets and tokens are optional.
 
-All commands, environment variables and build instructions: [`docs/usage.md`](docs/usage.md).
+For the command-line interface, environment variables and building from source, see
+[`docs/usage.md`](docs/usage.md).
 
 ## License
 
