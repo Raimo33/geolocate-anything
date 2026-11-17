@@ -47,6 +47,15 @@ flyovers in the recording, then searches ADS-B history (ADSB.lol) for the place 
 the right aircraft, at the right distance and speed, at the right moments, and no other in
 between. On the recording that inspired it, the answer lands within 160 m of the true spot.
 
+**Storage.** A day of ADSB.lol history is ~4 GB of raw position fixes. It is streamed,
+never stored raw: jets are dropped, and instead of keeping every fix of every aircraft each
+flight is kept as a smooth curve through a few *nodes* (position and velocity), one at each
+turn, climb or speed change and at most 100 s apart, placed so the curve stays within 25 m
+of the real track. Nodes are delta-coded and compressed to ~6 bytes each. A day goes from
+37 million fixes to 8.5 million nodes, **~4 GB → ~48 MB (about 80× smaller)**, and the
+curve stays within 11 m of the raw fixes (median), as close as the fixes agree with
+themselves. The whole ADSB.lol archive (~1,350 days) fits in ~65 GB.
+
 Limits: only aircraft with ADS-B coverage, jets excluded; it needs a time window (a day for
 two or more flyovers, the hum's second for one).
 
