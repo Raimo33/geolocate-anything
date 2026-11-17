@@ -3,6 +3,7 @@
 ## Git
 
 - Commit and push directly to `main`. Do not create branches or pull requests unless asked.
+- Never put links to Claude sessions or chats (`claude.ai/...`, `Claude-Session:` lines, "Generated with Claude Code" links) in commit messages, PR titles or descriptions, comments, or any file in the repo.
 
 ## Tests
 
