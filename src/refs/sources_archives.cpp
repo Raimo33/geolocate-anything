@@ -233,7 +233,7 @@ asio::awaitable<MonthData> zk_fetch(Ctx& c, const std::string& grid, const std::
   auto load = zk_loader(*d);
   auto v = co_await take_month(c, key, month, load);
   if (!v) throw Unavailable(std::string(d->path) + " has no rows in " + month);
-  auto s = c.files[key];
+  auto s = c.files.contains(key) ? c.files[key] : nullptr;
   MonthData md;
   md.values = std::move(*v);
   if (!any_finite(md.values))
@@ -244,8 +244,8 @@ asio::awaitable<MonthData> zk_fetch(Ctx& c, const std::string& grid, const std::
              {"licence", "CC BY 4.0 (Hartmann et al., Nat. Energy 2026, doi:10.1038/s41560-026-02144-0)"},
              {"native_resolution_s", 1.0},
              {"timestamps", "UTC (GPS-disciplined recorder)"},
-             {"rows", s->rows},
-             {"rows_kept", s->kept}};
+             {"rows", s ? s->rows : 0},
+             {"rows_kept", s ? s->kept : 0}};
   co_return md;
 }
 

@@ -230,10 +230,8 @@ namespace {
 constexpr const char* FINGRID_PAGE = "https://data.fingrid.fi/en/datasets/339";
 constexpr const char* FINGRID_BASE = "https://data.fingrid.fi";
 
-std::map<std::string, std::string> parse_fingrid_index_sv(std::string_view h) { return parse_fingrid_index(h); }
-
 asio::awaitable<const std::map<std::string, std::string>*> fingrid_urls(Ctx& c) {
-  if (!c.fingrid) c.fingrid = co_await cached_index(c, "fingrid_index.json", FINGRID_PAGE, &parse_fingrid_index_sv);
+  if (!c.fingrid) c.fingrid = co_await cached_index(c, "fingrid_index.json", FINGRID_PAGE, &parse_fingrid_index);
   co_return &*c.fingrid;
 }
 

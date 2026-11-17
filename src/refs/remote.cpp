@@ -2,6 +2,7 @@
 
 #include <openssl/evp.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -161,7 +162,7 @@ int pull(const std::string& grid, std::function<void(int, int)> progress) {
     if (progress) progress(0, total);
     auto get = [&](const std::string& rel) -> asio::awaitable<void> {
       fs::path dst = root / rel, tmp = dst;
-      tmp += ".tmp";
+      tmp += "." + std::to_string(::getpid()) + ".tmp";  // per process: another may fetch the same key
       fs::create_directories(dst.parent_path());
       std::FILE* f = std::fopen(tmp.c_str(), "wb");
       if (!f) throw std::runtime_error("cannot write " + tmp.string());

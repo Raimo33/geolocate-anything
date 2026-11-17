@@ -648,8 +648,17 @@ async function pollAdsbJob(job) {
   const tick = setInterval(renderAdsbFetch, 1000);
   renderAdsbFetch();
   try {
-    for (;;) {
-      const p = await fetch(`api/locate/${job}`), s = await readJson(p);
+    for (let misses = 0; ; ) {
+      let p, s;
+      try {
+        p = await fetch(`api/locate/${job}`);
+        s = await readJson(p);
+      } catch (e) {  // ride out brief network drops
+        if (++misses > 15) { ADSB_FETCH = { state: "error", text: "lost contact with the server" }; break; }
+        await new Promise((res) => setTimeout(res, 3000));
+        continue;
+      }
+      misses = 0;
       if (p.ok && (s.state === "queued" || s.state === "running")) {
         if (s.elapsed_s != null) ADSB_FETCH.t0 = Date.now() - s.elapsed_s * 1000;
         ADSB_FETCH.text = s.state === "queued" ? "Waiting for another aircraft fetch to finish" : "";
@@ -748,7 +757,7 @@ async function drawAdsb() {
   const j = await adsbLoad();
   if (!j || off()) return;
   if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }
-  const max = Math.max(1, ...j.cells.map((c) => c[2])), lmax = Math.log1p(max), d = j.cell_deg;
+  const max = j.cells.reduce((m, c) => Math.max(m, c[2]), 1), lmax = Math.log1p(max), d = j.cell_deg;
   const frac = (m) => Math.log1p(m) / lmax;
   adsbLayer = L.layerGroup(j.cells.map(([s, w, m]) => L.rectangle([[s, w], [s + d, w + d]], {
     renderer: adsbRenderer, stroke: false, fillColor: covColor(frac(m)), fillOpacity: 0.85,
@@ -884,7 +893,11 @@ function fillRange() {
   syncRange(rf);
 }
 async function loadGrids(first = false) {
-  GRIDS = await (await fetch("api/grids")).json();
+  try {
+    GRIDS = await (await fetch("api/grids")).json();
+  } catch {
+    if (!first) return;  // keep what is shown; the first load still draws the page
+  }
   fillRange();
   await Promise.all([countriesReady, areasReady]);
   if (first) route();
@@ -893,7 +906,13 @@ async function loadGrids(first = false) {
 let polling = null;
 async function pollRefresh(resp) {
   const prev = REFRESH;
-  REFRESH = await (resp || fetch("api/refresh")).then((r) => r.json());
+  try {
+    REFRESH = await (resp || fetch("api/refresh")).then((r) => r.json());
+  } catch {  // the server is briefly unreachable: keep watching what was running
+    clearTimeout(polling);
+    if (Object.keys(REFRESH).some(busy)) polling = setTimeout(pollRefresh, 5000);
+    return;
+  }
   const wasBusy = (id) => ["queued", "running"].includes(prev[id]?.state);
   for (const id of Object.keys(REFRESH)) if (busy(id)) { if (!BATCH.size || ![...BATCH].some(busy)) { BATCH = new Set(); BATCH_DONE = null; } BATCH.add(id); }
   const finished = Object.keys(REFRESH).some((id) => wasBusy(id) && !busy(id));
@@ -1311,7 +1330,6 @@ function drawTimeZone() {
   });
 }
 
-
 // ---------------------------------------------------------------- aircraft
 // Search area for the aircraft when the hum gives no grid: the map's view when chosen.
 let AIR_AREA = null;
@@ -1363,7 +1381,6 @@ let AIR_MARKS = [];  // per flight: {line, plane, ray}
 function drawAircraft() {
   if (airLayer) { airLayer.remove(); airLayer = null; }
   if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }
-  $("map").classList.remove("adsb");
   AIR_MARKS = [];
   const a = REPORT?.aircraft, best = airBest();
   if (!a || !best) return null;
@@ -1444,7 +1461,7 @@ function drawSpectra() {
     const cv = box.querySelector("canvas"), svg = box.querySelector("svg"), tip = box.querySelector(".tip");
     cv.width = sp.w; cv.height = sp.h;
     const bytes = Uint8Array.from(atob(sp.pixels), (c) => c.charCodeAt(0)), img = cv.getContext("2d").createImageData(sp.w, sp.h);
-    for (let i = 0; i < bytes.length; i++) { const c = SPEC_LUT[bytes[i]]; img.data.set([c[0], c[1], c[2], 255], i * 4); }
+    for (let i = 0, d = img.data; i < bytes.length; i++) { const c = SPEC_LUT[bytes[i]]; d[4 * i] = c[0], d[4 * i + 1] = c[1], d[4 * i + 2] = c[2], d[4 * i + 3] = 255; }
     cv.getContext("2d").putImageData(img, 0, 0);
     const W = box.clientWidth || 380, H = 190;
     const x = (t) => ((t - sp.t0) / (sp.t1 - sp.t0)) * W, y = (f) => (1 - (f - sp.f_lo) / (sp.f_hi - sp.f_lo)) * H;
@@ -1485,10 +1502,15 @@ $("tab-body").addEventListener("click", (ev) => {
   const c = ev.target.closest(".flight[data-f]"); if (!c) return;
   const m = AIR_MARKS[+c.dataset.f]; if (!m) return;
   const target = m.plane || m.line;
+  if (!target) return;
   if (m.line) map.flyToBounds(m.line.getBounds().extend(m.plane ? m.plane.getLatLng() : m.line.getBounds()), { ...fitPad(), maxZoom: 12, duration: 0.7 });
   setTimeout(() => target.openPopup(), 750);
 });
-addEventListener("resize", () => { if (REPORT && !$("v-result").classList.contains("hidden")) renderTab(); });
+let resizing = null;
+addEventListener("resize", () => {
+  clearTimeout(resizing);
+  resizing = setTimeout(() => { if (REPORT && !$("v-result").classList.contains("hidden")) renderTab(); }, 150);
+});
 loadGrids(true).then(() => pollRefresh());  // picks up refreshes still running from before a reload
 </script>
 </body>

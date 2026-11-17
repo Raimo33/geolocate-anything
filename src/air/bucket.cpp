@@ -1,5 +1,7 @@
 #include "air/bucket.hpp"
 
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdio>
 #include <iostream>
@@ -31,7 +33,7 @@ std::string fail(const net::Response& r) { return r.error.empty() ? "HTTP " + st
 asio::awaitable<bool> get(net::Http& http, const net::s3::Bucket& b, const std::string& key, const fs::path& dst) {
   fs::create_directories(dst.parent_path());
   fs::path tmp = dst;
-  tmp += ".part";
+  tmp += "." + std::to_string(::getpid()) + ".part";  // per process: another may fetch the same key
   for (int attempt = 0;; ++attempt) {
     std::FILE* f = std::fopen(tmp.c_str(), "wb");
     if (!f) throw std::runtime_error("cannot write " + tmp.string());
