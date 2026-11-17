@@ -141,7 +141,22 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o = {});
 // Tracks with fixes in [t0, t1] (and the fix either side of it), from the stored days
 // that overlap; only fixes inside `bbox` when given. Each aircraft's fixes are split
 // into gap-free segments by `split_tracks`.
-std::vector<Track> load_tracks(double t0, double t1, const std::optional<Bbox>& bbox = {});
+// With `speed` [lo, hi] (m/s), only aircraft with such a node there and then (node
+// speeds: the curve between nodes can differ by a few m/s; leave a margin).
+// Aircraft are picked with the day's chunk index (<day>.idx, built on first use), so
+// only those with a node near the window inside the box are decompressed.
+std::vector<Track> load_tracks(double t0, double t1, const std::optional<Bbox>& bbox = {}, const std::optional<std::pair<double, double>>& speed = {});
+
+// The chunk index of a stored day: every aircraft's nodes in 10-minute slots, each with
+// its box and speed range. A sidecar (<day>.idx) built from the store alone, so it is
+// added to existing stores without fetching them again; rebuilt when the store changes.
+fs::path index_path(const std::string& day);
+struct IndexStats {
+  std::size_t aircraft = 0, chunks = 0;
+  std::uint64_t bytes = 0, store_bytes = 0;
+  double seconds = 0;  // reading it, or building and writing it
+};
+IndexStats ensure_index(const std::string& day, bool force = false);
 
 // Gap-free pieces: a new piece starts at a readsb leg start or after more than
 // `max_gap_s` without a fix.

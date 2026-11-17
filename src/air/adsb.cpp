@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -945,9 +946,156 @@ struct DayFile {
     std::memcpy(idx.data(), raw.data(), raw.size());
   }
   std::vector<Fix> fixes(const IndexEntry& e) const { return nodes_of(zstd_decompress(mf.view().substr(8 + e.offset, e.clen)), e.nfix, e.t0); }
+  // What identifies this store's contents: its size and its tail (aircraft, index size).
+  std::uint64_t signature() const {
+    std::string_view v = mf.view();
+    std::uint64_t tail = 0;
+    std::memcpy(&tail, v.data() + v.size() - 8, 8);
+    return std::uint64_t(v.size()) * 0x9e3779b97f4a7c15ull ^ tail;
+  }
 };
 
+// ---------------------------------------------------------------- chunk index (<day>.idx)
+//
+// A sidecar to the store, per aircraft (in the store's index order): its nodes in
+// CHUNK_S slots, each slot's box (0.01 deg, rounded outwards) and speed range (1 m/s,
+// node speed sqrt(gs^2 + vrate^2)). A search over a large box, a narrow window or a
+// speed range decompresses only aircraft with a matching chunk. Built from the store
+// alone (at ingest, or on first use when missing or stale), so older stores need no
+// rebuild.
+constexpr char IDX_MAGIC[8] = {'G', 'L', 'A', 'D', 'X', 'I', '0', '1'};
+constexpr double CHUNK_S = 600.0;
+
+struct Chunk {
+  std::int32_t slot = 0;  // floor(t / CHUNK_S)
+  std::int16_t south = 0, north = 0, west = 0, east = 0;  // 0.01 deg
+  std::uint8_t vlo = 0, vhi = 0;                         // m/s
+};
+
+struct DayIndex {
+  std::vector<std::uint32_t> first;  // per aircraft: its chunks are [first[i], first[i + 1])
+  std::vector<Chunk> chunks;
+  // Has aircraft i a node in [t0, t1] inside the box (and, given, at a speed in [vlo, vhi])?
+  bool any(std::size_t i, double t0, double t1, const Bbox& b, double vlo = 0, double vhi = INFINITY) const {
+    const auto s0 = std::int32_t(std::floor(t0 / CHUNK_S)), s1 = std::int32_t(std::floor(t1 / CHUNK_S));
+    for (std::uint32_t k = first[i]; k < first[i + 1]; ++k) {
+      const Chunk& c = chunks[k];
+      if (c.slot < s0 || c.slot > s1 || c.east * 0.01 < b.west || c.west * 0.01 > b.east || c.north * 0.01 < b.south || c.south * 0.01 > b.north) continue;
+      if (c.vhi < vlo || c.vlo > vhi) continue;
+      return true;
+    }
+    return false;
+  }
+};
+
+std::vector<Chunk> chunks_of(const std::vector<Fix>& fx) {
+  std::vector<Chunk> out;
+  for (auto& f : fx) {
+    const auto slot = std::int32_t(std::floor(f.t / CHUNK_S));
+    const auto s = std::int16_t(std::floor(f.lat * 100)), n = std::int16_t(std::ceil(f.lat * 100));
+    const auto w = std::int16_t(std::floor(f.lon * 100)), e = std::int16_t(std::ceil(f.lon * 100));
+    std::uint8_t vlo = 0, vhi = 255;
+    if (std::isfinite(f.gs)) {
+      const double v = std::hypot(double(f.gs), std::isfinite(f.vrate) ? double(f.vrate) : 0.0);
+      vlo = std::uint8_t(std::clamp(std::floor(v), 0.0, 255.0)), vhi = std::uint8_t(std::clamp(std::ceil(v), 0.0, 255.0));
+    }
+    if (out.empty() || out.back().slot != slot) {
+      out.push_back({slot, s, n, w, e, vlo, vhi});
+      continue;
+    }
+    Chunk& c = out.back();
+    c.south = std::min(c.south, s), c.north = std::max(c.north, n), c.west = std::min(c.west, w), c.east = std::max(c.east, e);
+    c.vlo = std::min(c.vlo, vlo), c.vhi = std::max(c.vhi, vhi);
+  }
+  return out;
+}
+
+// Columnar (each field's bytes in turn) for zstd.
+std::string encode_index(const DayIndex& ix, std::uint64_t sig) {
+  std::string raw;
+  const std::size_t n = ix.first.size() - 1;
+  for (std::size_t i = 0; i < n; ++i) put(raw, std::uint16_t(ix.first[i + 1] - ix.first[i]));
+  std::int32_t prev = 0;
+  for (auto& c : ix.chunks) put(raw, std::int32_t(c.slot - prev)), prev = c.slot;
+  for (auto& c : ix.chunks) put(raw, c.south);
+  for (auto& c : ix.chunks) put(raw, std::int16_t(c.north - c.south));
+  for (auto& c : ix.chunks) put(raw, c.west);
+  for (auto& c : ix.chunks) put(raw, std::int16_t(c.east - c.west));
+  for (auto& c : ix.chunks) put(raw, c.vlo);
+  for (auto& c : ix.chunks) put(raw, std::uint8_t(c.vhi - c.vlo));
+  std::string out(IDX_MAGIC, 8);
+  put(out, sig);
+  put(out, std::uint32_t(n));
+  put(out, std::uint32_t(ix.chunks.size()));
+  out += zstd_compress(raw, STORE_LEVEL);
+  return out;
+}
+
+std::optional<DayIndex> decode_index(std::string_view v, std::uint64_t sig, std::size_t n_aircraft) {
+  if (v.size() < 24 || std::memcmp(v.data(), IDX_MAGIC, 8) != 0) return std::nullopt;
+  v.remove_prefix(8);
+  if (get<std::uint64_t>(v) != sig || get<std::uint32_t>(v) != n_aircraft) return std::nullopt;
+  const std::size_t m = get<std::uint32_t>(v);
+  const std::string raw = zstd_decompress(v);
+  if (raw.size() != n_aircraft * 2 + m * 14) return std::nullopt;
+  std::string_view r = raw;
+  DayIndex ix;
+  ix.first.resize(n_aircraft + 1);
+  for (std::size_t i = 0; i < n_aircraft; ++i) ix.first[i + 1] = ix.first[i] + get<std::uint16_t>(r);
+  if (ix.first.back() != m) return std::nullopt;
+  ix.chunks.resize(m);
+  std::int32_t prev = 0;
+  for (auto& c : ix.chunks) c.slot = prev += get<std::int32_t>(r);
+  for (auto& c : ix.chunks) c.south = get<std::int16_t>(r);
+  for (auto& c : ix.chunks) c.north = std::int16_t(c.south + get<std::int16_t>(r));
+  for (auto& c : ix.chunks) c.west = get<std::int16_t>(r);
+  for (auto& c : ix.chunks) c.east = std::int16_t(c.west + get<std::int16_t>(r));
+  for (auto& c : ix.chunks) c.vlo = get<std::uint8_t>(r);
+  for (auto& c : ix.chunks) c.vhi = std::uint8_t(c.vlo + get<std::uint8_t>(r));
+  return ix;
+}
+
+DayIndex build_index(const DayFile& df) {
+  std::vector<std::vector<Chunk>> per(df.idx.size());
+  parallel_for(df.idx.size(), [&](std::size_t i) { per[i] = chunks_of(df.fixes(df.idx[i])); });
+  DayIndex ix;
+  ix.first.push_back(0);
+  for (auto& c : per) {
+    if (c.size() > 0xffff) c.resize(0xffff);  // (a day holds 144 slots)
+    ix.chunks.insert(ix.chunks.end(), c.begin(), c.end());
+    ix.first.push_back(std::uint32_t(ix.chunks.size()));
+  }
+  return ix;
+}
+
+// The day's chunk index: read, or (missing, stale, unreadable) built and written.
+DayIndex day_index(const std::string& day, const DayFile& df, bool force = false) {
+  const fs::path p = index_path(day);
+  if (!force)
+    if (auto txt = read_file(p)) try {
+        if (auto ix = decode_index(*txt, df.signature(), df.idx.size())) return std::move(*ix);
+      } catch (const std::exception&) {  // damaged: rebuilt below
+      }
+  DayIndex ix = build_index(df);
+  atomic_write(p, encode_index(ix, df.signature()));
+  return ix;
+}
+
 }  // namespace
+
+fs::path index_path(const std::string& day) { return adsb_dir() / (day + ".idx"); }
+
+IndexStats ensure_index(const std::string& day, bool force) {
+  DayFile df(day_path(day));
+  const auto t = std::chrono::steady_clock::now();
+  const DayIndex ix = day_index(day, df, force);
+  IndexStats st;
+  st.aircraft = df.idx.size(), st.chunks = ix.chunks.size();
+  st.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
+  std::error_code ec;
+  st.bytes = fs::file_size(index_path(day), ec), st.store_bytes = fs::file_size(day_path(day), ec);
+  return st;
+}
 
 namespace {
 
@@ -1087,7 +1235,7 @@ void evict_days() {
   auto days = stored_days();
   std::sort(days.begin(), days.end(), [&](auto& a, auto& b) { return used(a) > used(b); });
   for (std::size_t i = std::size_t(keep); i < days.size(); ++i)
-    for (const char* ext : {".trk", ".used"}) fs::remove(adsb_dir() / (days[i] + ext));
+    for (const char* ext : {".trk", ".idx", ".used"}) fs::remove(adsb_dir() / (days[i] + ext));
 }
 
 bool ensure_day(const std::string& day) {
@@ -1331,6 +1479,7 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
   if (!of) throw std::runtime_error("cannot write " + tmp_out.string());
   fs::rename(tmp_out, out);
   day_coverage(day, true);
+  ensure_index(day, true);
   mark_used(day);
   evict_days();
   sp = MappedFile();
@@ -1338,7 +1487,7 @@ IngestStats ingest_day(const std::string& day, const IngestOptions& o) {
   return st;
 }
 
-std::vector<Track> load_tracks(double t0, double t1, const std::optional<Bbox>& bbox) {
+std::vector<Track> load_tracks(double t0, double t1, const std::optional<Bbox>& bbox, const std::optional<std::pair<double, double>>& speed) {
   std::vector<Track> out;
   // A day's archive holds that UTC day's traces; a window near midnight needs both.
   for (i64 d = floor_div(i64(std::floor(t0)), 86400) - 1; d <= floor_div(i64(std::floor(t1)), 86400); ++d) {
@@ -1349,9 +1498,16 @@ std::vector<Track> load_tracks(double t0, double t1, const std::optional<Bbox>& 
       std::error_code ec;  // last use, for a bounded store's eviction
       fs::last_write_time(adsb_dir() / (day + ".used"), fs::file_time_type::clock::now(), ec);
     }
-    for (auto& e : df.idx) {
+    const DayIndex ix = day_index(day, df);
+    for (std::size_t i = 0; i < df.idx.size(); ++i) {
+      const IndexEntry& e = df.idx[i];
       if (e.t1 < t0 - 300 || e.t0 > t1 + 300) continue;
       if (bbox && (e.east < bbox->west || e.west > bbox->east || e.north < bbox->south || e.south > bbox->north)) continue;
+      // Kept below: nodes in the window, one either side, inside the box. A segment
+      // needs two of them within PIECE_GAP_S, so one node in the box within
+      // PIECE_GAP_S of the window: without such a chunk the aircraft would yield nothing.
+      if (!ix.any(i, t0 - PIECE_GAP_S - 1, t1 + PIECE_GAP_S + 1, bbox.value_or(Bbox{}), speed ? speed->first : 0.0, speed ? speed->second : INFINITY))
+        continue;
       Track tr = track_of(e);
       if (tr.type.empty())  // stored before the registry knew it
         if (auto t = AircraftDb::get().type(tr.icao); !t.empty())

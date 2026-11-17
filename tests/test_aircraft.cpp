@@ -319,6 +319,22 @@ TEST(AircraftStore, IngestsADayFromLocalTarParts) {
     EXPECT_NEAR(f.alt_m, 3100 * FT, 2.5);
     EXPECT_NEAR(f.gs, 165.8 * KT, 0.5);
   }
+  // The chunk index (built at ingest) picks aircraft by box, window and speed.
+  EXPECT_TRUE(fs::exists(index_path("2026-01-01")));
+  EXPECT_EQ(load_tracks(1767225600.0, 1767225700.0, Bbox{-100.1, 39.9, -99.9, 40.1}).size(), 1u);
+  EXPECT_TRUE(load_tracks(1767225600.0, 1767225700.0, Bbox{-99.0, 39.9, -98.5, 40.1}).empty());
+  EXPECT_TRUE(load_tracks(1767225600.0 + 3600, 1767225700.0 + 3600).empty());                        // an hour later
+  EXPECT_EQ(load_tracks(1767225600.0, 1767225700.0, std::nullopt, std::pair{80.0, 90.0}).size(), 1u);  // 85 m/s
+  EXPECT_TRUE(load_tracks(1767225600.0, 1767225700.0, std::nullopt, std::pair{100.0, 150.0}).empty());
+  {
+    const auto st = ensure_index("2026-01-01");
+    EXPECT_EQ(st.aircraft, 1u);
+    EXPECT_EQ(st.chunks, 1u);
+    // A stale or damaged sidecar is rebuilt from the store.
+    atomic_write(index_path("2026-01-01"), "GLADXI01 junk");
+    EXPECT_EQ(load_tracks(1767225600.0, 1767225700.0).size(), 1u);
+    EXPECT_EQ(ensure_index("2026-01-01").chunks, 1u);
+  }
   // Coverage: the Cessna's 4 fixes span one minute and one 0.5 deg cell (40.0 N, 100.0 W).
   auto cov = parse_json(coverage_json());
   ASSERT_EQ(cov.at("days").as_array().size(), 1u);
@@ -383,6 +399,37 @@ TEST(AircraftTerrain, ReadsFloatGeoTiffWithPredictor) {
   EXPECT_NEAR(r.sample(-73.75, 41.0), 0.5 * (v[0] + v[1]), 1e-4);
 }
 
+TEST(AircraftSearch, PathBoundsHoldTheWholeCurve) {
+  // Erratic nodes (turns, climbs, velocities disagreeing with positions, up to 100 s
+  // apart): every point and speed of the Hermite curve, sampled densely, lies within.
+  std::mt19937_64 rng(11);
+  std::uniform_real_distribution<double> u(-1, 1);
+  for (int trial = 0; trial < 200; ++trial) {
+    const double lat0 = 60 * u(rng), lon0 = 170 * u(rng);
+    const Enu f(lat0, lon0, 0.0);
+    std::vector<PathPoint> pts;
+    Vec3 p{0, 0, 1000 + 500 * u(rng)};
+    double t = 0;
+    for (int i = 0; i < 12; ++i) {
+      const Vec3 v{150 * u(rng), 150 * u(rng), 10 * u(rng)};
+      pts.push_back({t, f.unrot(p) + f.o, f.unrot(v)});
+      const double h = 2 + 98 * std::abs(u(rng));
+      p = p + Vec3{v.x * h + 3000 * u(rng), v.y * h + 3000 * u(rng), 100 * u(rng)};
+      t += h;
+    }
+    const Path path(std::move(pts));
+    const PathBounds b = path_bounds(path);
+    for (double x = path.t0(); x <= path.t1(); x += 0.05) {
+      Vec3 q, v;
+      path.state(x, q, v);
+      const Geodetic g = geodetic(q);
+      ASSERT_TRUE(b.box.contains(g.lat, g.lon)) << trial << " t " << x;
+      ASSERT_GE(v.norm(), b.vlo) << trial << " t " << x;
+      ASSERT_LE(v.norm(), b.vhi) << trial << " t " << x;
+    }
+  }
+}
+
 TEST(AircraftSearch, FindsTheListenerFromTwoFlyovers) {
   // Listener at 40.0 N, 100.0 W (ground at the geoid: the test cache has no DEM, and
   // the search runs offline). Two passes 600 s apart, plus decoys: one aircraft at the
@@ -433,6 +480,27 @@ TEST(AircraftSearch, FindsTheListenerFromTwoFlyovers) {
   EXPECT_EQ(c.matches[0].flight, "a00010");
   EXPECT_EQ(c.matches[1].flight, "a00011");
   EXPECT_GE(r.level, AirLevel::Moderate);
+  // Pair-first and the segment bounds rasterize fewer cells and keep exactly the same
+  // survivors and answer.
+  EXPECT_GT(r.pair_pieces, r.pair_kept);
+  {
+    SearchOptions all = so;
+    all.pair_first = false, all.segment_bounds = false;
+    auto r0 = search(spec, det.events, split_tracks(tracks), terrain, all);
+    EXPECT_EQ(r0.pair_pieces, 0u);
+    EXPECT_LT(r.corridor_cells, r0.corridor_cells);
+    EXPECT_EQ(r.consistent_cells, r0.consistent_cells);
+    EXPECT_EQ(r.silent_cells, r0.silent_cells);
+    EXPECT_EQ(r.scored, r0.scored);
+    ASSERT_EQ(r.candidates.size(), r0.candidates.size());
+    for (std::size_t i = 0; i < r.candidates.size(); ++i) {
+      EXPECT_EQ(r.candidates[i].combo, r0.candidates[i].combo);
+      EXPECT_DOUBLE_EQ(r.candidates[i].lat, r0.candidates[i].lat);
+      EXPECT_DOUBLE_EQ(r.candidates[i].lon, r0.candidates[i].lon);
+      EXPECT_DOUBLE_EQ(r.candidates[i].start_utc, r0.candidates[i].start_utc);
+      EXPECT_DOUBLE_EQ(r.candidates[i].score, r0.candidates[i].score);
+    }
+  }
   // The same with the start known to a few seconds and one flyover allowed.
   so.start_min = start - 3, so.start_max = start + 3, so.min_events = 1;
   auto r1 = search(spec, det.events, split_tracks(tracks), terrain, so);

@@ -325,6 +325,25 @@ void register_commands(CLI::App& app, int& rc) {
     if (pl_progress) std::printf("%s\n", dump(json::object{{"files", n}}).c_str());
     else std::printf("%d coverage file(s) downloaded\n", n);
   });
+  // aircraft index [DAY...]
+  auto* ix = air->add_subcommand("index", "build the chunk index (<day>.idx) of stored ADS-B days from their stores (no download)");
+  static std::vector<std::string> ix_days;
+  static bool ix_force = false;
+  ix->add_option("day", ix_days, "UTC day(s), YYYY-MM-DD (default: every stored day)");
+  ix->add_flag("--force", ix_force, "rebuild even when up to date");
+  ix->callback([&rc] {
+    auto days = ix_days.empty() ? stored_days() : ix_days;
+    rc = 0;
+    for (auto& d : days) {
+      if (!has_day(d)) {
+        std::fprintf(stderr, "%s: not stored\n", d.c_str()), rc = 1;
+        continue;
+      }
+      const auto st = ensure_index(d, ix_force);
+      std::printf("%s: %zu aircraft, %zu chunks, %.2f MB (%.1f%% of the store's %.1f MB), %.2f s\n", d.c_str(), st.aircraft, st.chunks, st.bytes / 1e6,
+                  100.0 * double(st.bytes) / double(std::max<std::uint64_t>(1, st.store_bytes)), st.store_bytes / 1e6, st.seconds);
+    }
+  });
 }
 
 }  // namespace geo::air

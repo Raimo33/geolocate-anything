@@ -1,8 +1,10 @@
 #include "air/search.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
@@ -38,7 +40,46 @@ struct Seg {
   Path path;  // ECEF
   bool eligible = true;  // type allowed as an event source
   std::vector<char> f0_ok;  // per event: the type can make its tone
+  Bbox box;                 // holds every point of the curve
+  double vlo = 0, vhi = INFINITY;  // bounds of the curve's speed
 };
+
+// Bounds of a Hermite path (path_bounds), from its nodes alone. Between nodes a and b (h apart) the
+// curve is p0 + h01 (p1 - p0) + h (h10 v0 + h11 v1), |h10|, |h11| <= 4/27: within
+// (4/27) h (|v0| + |v1|) of the chord. Its velocity is (1 - s) v0 + s v1 +
+// 6 s (1 - s) (c - (v0 + v1) / 2), c the chord velocity: within 1.5 |c - (v0 + v1) / 2| of
+// the segment from v0 to v1.
+}  // namespace
+
+PathBounds path_bounds(const Path& path) {
+  const auto& pts = path.points();
+  double south = 90, north = -90, west = 180, east = -180, grow = 0, vlo = INFINITY, vhi = 0;
+  for (std::size_t i = 0; i < pts.size(); ++i) {
+    const Geodetic g = geodetic(pts[i].p);
+    south = std::min(south, g.lat), north = std::max(north, g.lat), west = std::min(west, g.lon), east = std::max(east, g.lon);
+    if (i + 1 == pts.size()) break;
+    const PathPoint &a = pts[i], &b = pts[i + 1];
+    const double h = b.t - a.t;
+    if (h <= 0) {
+      vlo = std::min(vlo, a.v.norm()), vhi = std::max(vhi, a.v.norm());
+      continue;
+    }
+    const double va = a.v.norm(), vb = b.v.norm();
+    // The chord bulges off the endpoints' box by far less than 1% of its length.
+    grow = std::max(grow, 4.0 / 27.0 * h * (va + vb) + 0.01 * (b.p - a.p).norm());
+    const Vec3 dv = (b.p - a.p) * (1.0 / h) - (a.v + b.v) * 0.5;
+    const double e = 1.5 * dv.norm();
+    const Vec3 w = b.v - a.v;  // nearest point of the velocity segment to 0
+    const double ww = w.dot(w), s = ww > 0 ? std::clamp(-a.v.dot(w) / ww, 0.0, 1.0) : 0.0;
+    vlo = std::min(vlo, std::max(0.0, (a.v + w * s).norm() - e)), vhi = std::max(vhi, std::max(va, vb) + e);
+  }
+  grow = 1.01 * grow + 50.0;
+  return {Bbox{west, south, east, north}.grown(grow), vlo - 0.01, vhi + 0.01};
+}
+
+namespace {
+
+bool overlaps(const Bbox& a, const Bbox& b) { return !(a.east < b.west || a.west > b.east || a.north < b.south || a.south > b.north); }
 
 struct Piece {
   int seg = 0;
@@ -69,10 +110,14 @@ struct Survivor {
 };
 
 // Cuts every segment overlapping [wa, wb] into pieces of <= step seconds.
-std::vector<Piece> make_pieces(const std::vector<Seg>& segs, double wa, double wb, double step, const std::function<bool(const Seg&, double)>& keep) {
+// Segments rejected by `pre` are skipped whole (it must reject only segments none of
+// whose pieces `keep` would keep, or none of which could matter).
+std::vector<Piece> make_pieces(const std::vector<Seg>& segs, double wa, double wb, double step, const std::function<bool(const Seg&, double)>& keep,
+                               const std::function<bool(const Seg&)>& pre = {}) {
   std::vector<Piece> out;
   for (int si = 0; si < int(segs.size()); ++si) {
     const Seg& s = segs[std::size_t(si)];
+    if (pre && !pre(s)) continue;
     const double a = std::max(wa, s.path.t0()), b = std::min(wb, s.path.t1());
     if (b - a < 1.0) continue;
     const int n = std::max(1, int(std::ceil((b - a) / step)));
@@ -99,16 +144,35 @@ std::vector<Piece> make_pieces(const std::vector<Seg>& segs, double wa, double w
 // the piece's line falls within it, with some overlap so turns leave no gaps) within
 // horizontal distance rho of the line, into `map` (one segment's cells: the minimum over
 // its pieces). Cells outside the tile or rejected by `want` are skipped.
-template <class Want>
-void rasterize(const Piece& pc, const CellGrid& g, double rho, double mic, Terrain& terrain, const Bbox& tile, Want&& want,
-               std::unordered_map<std::uint64_t, Entry>& map) {
-  const double ca = std::cos(pc.lat_a * DEG), mx = ca * M_PER_DEG;
-  const double bx = (pc.lon_b - pc.lon_a) * mx, by = (pc.lat_b - pc.lat_a) * M_PER_DEG, bz = pc.h_b - pc.h_a;
-  const double L2 = bx * bx + by * by + bz * bz, Lh2 = bx * bx + by * by, Lh = std::sqrt(Lh2);
-  constexpr double SMIN = -0.3, SMAX = 1.3;
+// A piece's frame and footprint in one tile: the cells it rasterizes are exactly those
+// `cols` admits (shared by the rasterizer, the pair masks and the exact re-evaluation).
+struct PieceGeom {
+  double rho = 0, mx = 0, bx = 0, by = 0, bz = 0, L2 = 0, Lh2 = 0, Lh = 0;
+  i64 r0 = 0, r1 = -1;  // rows
+};
+
+PieceGeom piece_geom(const Piece& pc, const CellGrid& g, double rho, const Bbox& tile) {
+  PieceGeom q;
+  q.rho = rho;
+  const double ca = std::cos(pc.lat_a * DEG);
+  q.mx = ca * M_PER_DEG;
+  q.bx = (pc.lon_b - pc.lon_a) * q.mx, q.by = (pc.lat_b - pc.lat_a) * M_PER_DEG, q.bz = pc.h_b - pc.h_a;
+  q.L2 = q.bx * q.bx + q.by * q.by + q.bz * q.bz, q.Lh2 = q.bx * q.bx + q.by * q.by, q.Lh = std::sqrt(q.Lh2);
   const double dlat = rho / M_PER_DEG + g.dlat;
   const double lat_lo = std::max(tile.south, std::min(pc.lat_a, pc.lat_b) - dlat), lat_hi = std::min(tile.north, std::max(pc.lat_a, pc.lat_b) + dlat);
-  if (lat_lo > lat_hi) return;
+  if (lat_lo <= lat_hi) q.r0 = g.row(lat_lo), q.r1 = g.row(lat_hi);
+  return q;
+}
+
+// Columns [c0, c1] of row r inside the piece's slab (the cells whose foot on the
+// piece's line falls within it, with some overlap so turns leave no gaps) within
+// horizontal distance rho of the line; false when none. Cell centres outside the tile
+// must still be skipped by the caller.
+bool piece_cols(const Piece& pc, const PieceGeom& q, const CellGrid& g, const Bbox& tile, i64 r, i64& c0, i64& c1) {
+  constexpr double SMIN = -0.3, SMAX = 1.3;
+  const double lat = g.lat_c(r);
+  if (lat < tile.south || lat >= tile.north) return false;
+  const double oy = (lat - pc.lat_a) * M_PER_DEG, rho = q.rho;
   // ox in [lo, hi] for k * ox in [u, v].
   auto solve = [](double k, double u, double v, double& lo, double& hi) {
     if (std::abs(k) < 1e-9) {
@@ -119,51 +183,109 @@ void rasterize(const Piece& pc, const CellGrid& g, double rho, double mic, Terra
     lo = u / k, hi = v / k;
     if (lo > hi) std::swap(lo, hi);
   };
-  for (i64 r = g.row(lat_lo); r <= g.row(lat_hi); ++r) {
-    const double lat = g.lat_c(r);
-    if (lat < tile.south || lat >= tile.north) continue;
-    const double oy = (lat - pc.lat_a) * M_PER_DEG;
-    double lo = -rho, hi = rho;
-    if (Lh > 1.0) {
-      double l1, h1, l2, h2;
-      solve(bx, SMIN * Lh2 - oy * by, SMAX * Lh2 - oy * by, l1, h1);  // inside the slab
-      solve(by, oy * bx - rho * Lh, oy * bx + rho * Lh, l2, h2);      // within rho of the line
-      lo = std::max({l1, l2, -rho - Lh}), hi = std::min({h1, h2, rho + Lh});
-    } else if (std::abs(oy) > rho) {
-      continue;
+  double lo = -rho, hi = rho;
+  if (q.Lh > 1.0) {
+    double l1, h1, l2, h2;
+    solve(q.bx, SMIN * q.Lh2 - oy * q.by, SMAX * q.Lh2 - oy * q.by, l1, h1);  // inside the slab
+    solve(q.by, oy * q.bx - rho * q.Lh, oy * q.bx + rho * q.Lh, l2, h2);      // within rho of the line
+    lo = std::max({l1, l2, -rho - q.Lh}), hi = std::min({h1, h2, rho + q.Lh});
+  } else if (std::abs(oy) > rho) {
+    return false;
+  }
+  if (lo > hi) return false;
+  const double lon_lo = std::max(tile.west, pc.lon_a + lo / q.mx), lon_hi = std::min(tile.east, pc.lon_a + hi / q.mx);
+  if (lon_lo > lon_hi) return false;
+  c0 = g.col(r, lon_lo), c1 = g.col(r, lon_hi);
+  return true;
+}
+
+// Does the piece rasterize cell (r, c)?
+bool piece_covers(const Piece& pc, const PieceGeom& q, const CellGrid& g, const Bbox& tile, i64 r, i64 c) {
+  if (r < q.r0 || r > q.r1) return false;
+  i64 c0, c1;
+  if (!piece_cols(pc, q, g, tile, r, c0, c1) || c < c0 || c > c1) return false;
+  const double lon = g.lon_c(r, c);
+  return lon >= tile.west && lon < tile.east;
+}
+
+// The piece's closest distance to cell (r, c) folded into e (the minimum over pieces).
+void piece_cell(const Piece& pc, const PieceGeom& q, const CellGrid& g, double mic, Terrain& terrain, i64 r, i64 c, Entry& e) {
+  const double lat = g.lat_c(r), lon = g.lon_c(r, c);
+  const double oy = (lat - pc.lat_a) * M_PER_DEG;
+  const double ox = (lon - pc.lon_a) * q.mx, hor2 = ox * ox + oy * oy;
+  // Listener height in the piece's tangent frame: ground + mic, minus Earth's curvature.
+  const double oz = terrain.ground_coarse(lat, lon) + mic - pc.h_a - hor2 / (2 * EARTH_R);
+  const double s_raw = q.L2 > 0 ? (ox * q.bx + oy * q.by + oz * q.bz) / q.L2 : 0.0;
+  const double sc = std::clamp(s_raw, 0.0, 1.0);
+  const double dx = sc * q.bx - ox, dy = sc * q.by - oy, dz = sc * q.bz - oz;
+  const float rr = float(std::sqrt(dx * dx + dy * dy + dz * dz));
+  if (rr < e.r) {
+    e.seg = pc.seg;
+    e.r = rr;
+    e.speed = float(pc.speed);
+    e.t_emit = pc.ta + sc * (pc.tb - pc.ta);
+    e.edge = (pc.first && s_raw <= 0.0) || (pc.last && s_raw >= 1.0);
+  }
+}
+
+// The columns of each row that hold wanted cells (a sparse set's hull per row).
+struct RowSpans {
+  i64 r0 = 0;
+  std::vector<std::pair<i64, i64>> cols;  // per row from r0; first > second: none
+  template <class Keys>
+  explicit RowSpans(const Keys& keys) {
+    i64 lo = std::numeric_limits<i64>::max(), hi = std::numeric_limits<i64>::min();
+    for (auto k : keys) lo = std::min(lo, CellGrid::krow(k)), hi = std::max(hi, CellGrid::krow(k));
+    if (lo > hi) return;
+    r0 = lo;
+    cols.assign(std::size_t(hi - lo + 1), {std::numeric_limits<i64>::max(), std::numeric_limits<i64>::min()});
+    for (auto k : keys) {
+      auto& [a, b] = cols[std::size_t(CellGrid::krow(k) - lo)];
+      a = std::min(a, CellGrid::kcol(k)), b = std::max(b, CellGrid::kcol(k));
     }
-    if (lo > hi) continue;
-    const double lon_lo = std::max(tile.west, pc.lon_a + lo / mx), lon_hi = std::min(tile.east, pc.lon_a + hi / mx);
-    if (lon_lo > lon_hi) continue;
-    for (i64 c = g.col(r, lon_lo); c <= g.col(r, lon_hi); ++c) {
+  }
+  // Narrows [c0, c1] to row r's wanted columns; false when none remain.
+  bool clip(i64 r, i64& c0, i64& c1) const {
+    if (r < r0 || r >= r0 + i64(cols.size())) return false;
+    const auto& [a, b] = cols[std::size_t(r - r0)];
+    c0 = std::max(c0, a), c1 = std::min(c1, b);
+    return c0 <= c1;
+  }
+};
+
+// Closest distance from the piece to each cell it covers into `map` (one segment's
+// cells: the minimum over its pieces). Cells rejected by `want(key)` (or outside
+// `spans`) are skipped.
+template <class Want>
+void rasterize(const Piece& pc, const CellGrid& g, double rho, double mic, Terrain& terrain, const Bbox& tile, Want&& want,
+               std::unordered_map<std::uint64_t, Entry>& map, const RowSpans* spans = nullptr) {
+  const PieceGeom q = piece_geom(pc, g, rho, tile);
+  for (i64 r = q.r0; r <= q.r1; ++r) {
+    i64 c0, c1;
+    if (!piece_cols(pc, q, g, tile, r, c0, c1)) continue;
+    if (spans && !spans->clip(r, c0, c1)) continue;
+    for (i64 c = c0; c <= c1; ++c) {
       const double lon = g.lon_c(r, c);
       if (lon < tile.west || lon >= tile.east) continue;
       const std::uint64_t key = CellGrid::key(r, c);
       if (!want(key)) continue;
-      const double ox = (lon - pc.lon_a) * mx, hor2 = ox * ox + oy * oy;
-      // Listener height in the piece's tangent frame: ground + mic, minus Earth's curvature.
-      const double oz = terrain.ground_coarse(lat, lon) + mic - pc.h_a - hor2 / (2 * EARTH_R);
-      const double s_raw = L2 > 0 ? (ox * bx + oy * by + oz * bz) / L2 : 0.0;
-      const double sc = std::clamp(s_raw, 0.0, 1.0);
-      const double dx = sc * bx - ox, dy = sc * by - oy, dz = sc * bz - oz;
-      const float rr = float(std::sqrt(dx * dx + dy * dy + dz * dz));
-      Entry& e = map[key];
-      if (rr < e.r) {
-        e.seg = pc.seg;
-        e.r = rr;
-        e.speed = float(pc.speed);
-        e.t_emit = pc.ta + sc * (pc.tb - pc.ta);
-        e.edge = (pc.first && s_raw <= 0.0) || (pc.last && s_raw >= 1.0);
-      }
+      piece_cell(pc, q, g, mic, terrain, r, c, map[key]);
     }
   }
 }
 
+bool in_reach(const Piece& pc, const Bbox& reach) {
+  return !(std::max(pc.lat_a, pc.lat_b) < reach.south || std::min(pc.lat_a, pc.lat_b) > reach.north || std::max(pc.lon_a, pc.lon_b) < reach.west ||
+           std::min(pc.lon_a, pc.lon_b) > reach.east);
+}
+
 // Every segment's closest approaches to the tile's cells: pieces are grouped by segment
 // (make_pieces emits them in segment order); fn(cell, entry) once per (segment, cell).
-template <class Want, class Fn>
-void corridors(const std::vector<Piece>& pieces, const CellGrid& g, double rho, double mic, Terrain& terrain, const Bbox& tile, Want&& want,
-               const std::function<double(const Piece&)>& rho_of, Fn&& fn) {
+// `want(key, piece index)` selects the cells each piece writes; `skip(piece index)`
+// drops whole pieces.
+template <class Want, class Skip, class Fn>
+void corridors(const std::vector<Piece>& pieces, const CellGrid& g, double rho, double mic, Terrain& terrain, const Bbox& tile, Want&& want, Skip&& skip,
+               const std::function<double(const Piece&)>& rho_of, Fn&& fn, const RowSpans* spans = nullptr) {
   std::unordered_map<std::uint64_t, Entry> map;
   int cur = -1;
   auto flush = [&] {
@@ -171,14 +293,139 @@ void corridors(const std::vector<Piece>& pieces, const CellGrid& g, double rho, 
     map.clear();
   };
   const Bbox reach = tile.grown(rho);
-  for (auto& pc : pieces) {
+  for (std::size_t i = 0; i < pieces.size(); ++i) {
+    const Piece& pc = pieces[i];
     if (pc.seg != cur) flush(), cur = pc.seg;
-    if (std::max(pc.lat_a, pc.lat_b) < reach.south || std::min(pc.lat_a, pc.lat_b) > reach.north || std::max(pc.lon_a, pc.lon_b) < reach.west ||
-        std::min(pc.lon_a, pc.lon_b) > reach.east)
-      continue;
-    rasterize(pc, g, rho_of(pc), mic, terrain, tile, want, map);
+    if (!in_reach(pc, reach) || skip(i)) continue;
+    rasterize(pc, g, rho_of(pc), mic, terrain, tile, [&](std::uint64_t k) { return want(k, i); }, map, spans);
   }
   flush();
+}
+template <class Want, class Fn>
+void corridors(const std::vector<Piece>& pieces, const CellGrid& g, double rho, double mic, Terrain& terrain, const Bbox& tile, Want&& want,
+               const std::function<double(const Piece&)>& rho_of, Fn&& fn, const RowSpans* spans = nullptr) {
+  corridors(pieces, g, rho, mic, terrain, tile, [&](std::uint64_t k, std::size_t) { return want(k); }, [](std::size_t) { return false; }, rho_of, fn, spans);
+}
+
+// One event's candidate pieces: flying at its speed in its window.
+struct EvPieces {
+  std::vector<Piece> pieces;
+  double dlo, dhi, rho_max;
+};
+
+// A piece within reach of one tile, for the pair-first stage.
+struct LocalPiece {
+  std::size_t pi = 0;  // index in the event's pieces
+  PieceGeom q;
+  double a = INFINITY, b = -INFINITY;  // start interval any of its entries can imply
+  double lon0 = 0, lon1 = 0;           // longitudes of the cells it covers (with slack)
+  bool keep = false;
+  std::vector<std::pair<int, int>> partners;  // (event, local index): compatible pieces of other events
+};
+
+struct PairStage {
+  std::vector<std::vector<LocalPiece>> local;                            // per event, in piece order
+  std::vector<std::unordered_map<int, std::vector<std::size_t>>> by_seg;  // per event: segment -> local indices
+  std::size_t pieces = 0, kept = 0, pairs = 0;
+
+  // Can cell `key` be in a combination through local piece li of event ei? Only if
+  // kept partners of >= min_events - 1 other events cover it too.
+  bool mask(const std::vector<EvPieces>& evp, const CellGrid& g, const Bbox& tile, int min_events, std::size_t ei, std::size_t li,
+            std::uint64_t key) const {
+    const LocalPiece& l = local[ei][li];
+    if (l.partners.size() > 64) return true;  // busy airspace: testing costs more than it saves
+    const i64 r = CellGrid::krow(key), c = CellGrid::kcol(key);
+    std::uint64_t seen = 0;
+    int n = 0;
+    for (auto [ej, lj] : l.partners) {
+      if ((seen >> ej) & 1) continue;
+      const LocalPiece& m = local[std::size_t(ej)][std::size_t(lj)];
+      if (!m.keep || !piece_covers(evp[std::size_t(ej)].pieces[m.pi], m.q, g, tile, r, c)) continue;
+      seen |= std::uint64_t(1) << ej;
+      if (++n >= min_events - 1) return true;
+    }
+    return false;
+  }
+};
+
+// Pieces of each event within reach of the tile, paired with those of other events
+// whose start intervals overlap and whose footprints can share a cell; pieces with
+// partners in fewer than min_events - 1 other events are dropped (repeatedly: a
+// dropped piece is no one's partner).
+template <class RhoOf>
+PairStage pair_stage(const std::vector<Event>& ev, const std::vector<EvPieces>& evp, const CellGrid& g, const Bbox& tile, const SearchOptions& o,
+                     int min_events, RhoOf&& rho_of) {
+  PairStage ps;
+  const std::size_t n = ev.size();
+  ps.local.resize(n), ps.by_seg.resize(n);
+  const double lat_abs = std::min(89.9, std::max(std::abs(tile.south), std::abs(tile.north)));
+  const double slack = 2 * g.dlat / std::max(0.05, std::cos(lat_abs * DEG));  // a cell centre beyond the span's ends
+  std::vector<double> maxlen(n, 0.0);
+  for (std::size_t ei = 0; ei < n; ++ei) {
+    const Event& e = ev[ei];
+    const EvPieces& ep = evp[ei];
+    const Bbox reach = tile.grown(ep.rho_max);
+    auto& loc = ps.local[ei];
+    for (std::size_t i = 0; i < ep.pieces.size(); ++i) {
+      const Piece& pc = ep.pieces[i];
+      if (!in_reach(pc, reach)) continue;
+      LocalPiece l;
+      l.pi = i;
+      const double rho = rho_of(ei, pc);
+      l.q = piece_geom(pc, g, rho, tile);
+      if (l.q.r0 <= l.q.r1) {
+        const double a = std::max(o.start_min, pc.ta + ep.dlo / o.c - e.tc_hi - o.tc_tol_s) - 1e-3;
+        const double b = std::min(o.start_max, pc.tb + ep.dhi / o.c - e.tc_lo + o.tc_tol_s) + 1e-3;
+        if (a <= b) {
+          const double w = (rho + l.q.Lh) / l.q.mx;
+          l.a = a, l.b = b, l.keep = true;
+          l.lon0 = std::max(tile.west, pc.lon_a - w) - slack, l.lon1 = std::min(tile.east, pc.lon_a + w) + slack;
+          maxlen[ei] = std::max(maxlen[ei], b - a);
+        }
+      }
+      ps.by_seg[ei][pc.seg].push_back(loc.size());
+      loc.push_back(std::move(l));
+    }
+    ps.pieces += loc.size();
+  }
+  // Pairs: by start interval (sorted), then rows and longitudes.
+  std::vector<std::vector<std::size_t>> by_a(n);
+  for (std::size_t ei = 0; ei < n; ++ei) {
+    for (std::size_t li = 0; li < ps.local[ei].size(); ++li)
+      if (ps.local[ei][li].keep) by_a[ei].push_back(li);
+    std::sort(by_a[ei].begin(), by_a[ei].end(), [&](auto x, auto y) { return ps.local[ei][x].a < ps.local[ei][y].a; });
+  }
+  for (std::size_t ei = 0; ei < n; ++ei)
+    for (std::size_t ej = ei + 1; ej < n; ++ej) {
+      auto& lj = ps.local[ej];
+      const auto& oj = by_a[ej];
+      for (std::size_t pi : by_a[ei]) {
+        LocalPiece& p = ps.local[ei][pi];
+        auto it = std::lower_bound(oj.begin(), oj.end(), p.a - maxlen[ej], [&](std::size_t x, double v) { return lj[x].a < v; });
+        for (; it != oj.end() && lj[*it].a <= p.b; ++it) {
+          LocalPiece& q = lj[*it];
+          if (q.b < p.a || q.q.r1 < p.q.r0 || p.q.r1 < q.q.r0 || q.lon1 < p.lon0 || p.lon1 < q.lon0) continue;
+          p.partners.emplace_back(int(ej), int(*it));
+          q.partners.emplace_back(int(ei), int(pi));
+          ++ps.pairs;
+        }
+      }
+    }
+  for (int iter = 0; iter < 16; ++iter) {
+    bool changed = false;
+    for (std::size_t ei = 0; ei < n; ++ei)
+      for (auto& p : ps.local[ei]) {
+        if (!p.keep) continue;
+        std::uint64_t seen = 0;
+        for (auto [ej, lj] : p.partners)
+          if (ps.local[std::size_t(ej)][std::size_t(lj)].keep) seen |= std::uint64_t(1) << ej;
+        if (std::popcount(seen) < min_events - 1) p.keep = false, changed = true;
+      }
+    if (!changed) break;
+  }
+  for (auto& loc : ps.local)
+    for (auto& p : loc) ps.kept += p.keep;
+  return ps;
 }
 
 // Curve of f/f0 against absolute reception time for one path and listener, tabulated.
@@ -395,7 +642,9 @@ SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& e
     ro.max_subgrid = std::max(30, int(o.max_subgrid * share));
     ro.max_refine = regions.size() > 4 ? 2 : o.max_refine;
     if (std::isfinite(best_so_far)) ro.score_floor = std::max(o.score_floor, 0.6 * best_so_far);
+    const auto t_load = std::chrono::steady_clock::now();
     auto tracks = tracks_for(regions[i].grown(std::max(15000.0, 2 * o.silence_factor * 9000.0)));
+    all.wall_load += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_load).count();
     if (progress) {
       char b[160];
       std::snprintf(b, sizeof b, "region %zu/%zu [%.1f,%.1f,%.1f,%.1f]: %zu flight segments", i + 1, regions.size(), regions[i].west, regions[i].south,
@@ -407,7 +656,8 @@ SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& e
     all.segments += r.segments, all.corridor_cells += r.corridor_cells, all.consistent_cells += r.consistent_cells;
     all.silent_cells += r.silent_cells, all.scored += r.scored;
     all.type_pairs += r.type_pairs, all.type_pruned_pairs += r.type_pruned_pairs, all.type_pruned_segments += r.type_pruned_segments;
-    all.cpu_corridors += r.cpu_corridors, all.cpu_centre += r.cpu_centre;
+    all.cpu_corridors += r.cpu_corridors, all.cpu_centre += r.cpu_centre, all.cpu_pairs += r.cpu_pairs;
+    all.pair_pieces += r.pair_pieces, all.pair_kept += r.pair_kept, all.cpu_silence += r.cpu_silence, all.wall_pieces += r.wall_pieces;
     all.wall_tiles += r.wall_tiles, all.wall_subgrid += r.wall_subgrid, all.wall_refine += r.wall_refine, all.seconds += r.seconds;
     all.events_used = r.events_used;
     for (auto& c : r.candidates) {
@@ -507,7 +757,12 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
     Seg s{&tr, std::move(path), eligible};
     segs.push_back(std::move(s));
   }
+  parallel_for(segs.size(), [&](std::size_t i) {
+    const auto b = path_bounds(segs[i].path);
+    segs[i].box = b.box, segs[i].vlo = b.vlo, segs[i].vhi = b.vhi;
+  });
   res.segments = segs.size();
+  const auto t_pieces = std::chrono::steady_clock::now();
 
   // Rest-frequency prior: which events each segment's type can sound like.
   std::vector<std::vector<double>> ev_f0s(ev.size());
@@ -539,10 +794,6 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
 
   // Per event: pieces flying at the right speed in the right window.
   const CellGrid grid(o.cell_m);
-  struct EvPieces {
-    std::vector<Piece> pieces;
-    double dlo, dhi, rho_max;
-  };
   std::vector<EvPieces> evp(ev.size());
   double max_d = 0;
   for (std::size_t i = 0; i < ev.size(); ++i) {
@@ -552,9 +803,20 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
     max_d = std::max(max_d, e.d);
     const double wa = o.start_min + e.tc_lo - o.tc_tol_s - ep.dhi / o.c - 5, wb = o.start_max + e.tc_hi + o.tc_tol_s;
     const double vlo = e.v_lo - o.v_margin, vhi = e.v_hi + o.v_margin;
-    ep.pieces = make_pieces(segs, wa, wb, 4.0, [&](const Seg& s, double sp) { return s.eligible && s.f0_ok[i] && sp >= vlo && sp <= vhi; });
+    // A piece's speed is the mean of the curve's at its ends: inside the segment's bounds.
+    ep.pieces = make_pieces(
+        segs, wa, wb, 4.0, [&](const Seg& s, double sp) { return s.eligible && s.f0_ok[i] && sp >= vlo && sp <= vhi; },
+        [&](const Seg& s) { return s.eligible && s.f0_ok[i] && (!o.segment_bounds || (s.vhi >= vlo && s.vlo <= vhi)); });
   }
   const double silence_m = o.silence_factor * max_d;
+  res.wall_pieces = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_pieces).count();
+  // Horizontal reach: no farther than the slant range allows at the piece's height.
+  auto rho_of = [&](std::size_t ei, const Piece& pc) {
+    const double dhi = evp[ei].dhi;
+    const double agl = std::min(pc.h_a, pc.h_b) - terrain.ground_coarse(pc.lat_a, pc.lon_a) - 300.0;
+    return std::sqrt(std::max(0.0, dhi * dhi - std::max(0.0, agl) * std::max(0.0, agl))) + o.cell_m;
+  };
+  const bool pair_first = o.pair_first && min_events >= 2 && ev.size() <= 64;
 
   // Tiles of the search box.
   std::vector<Bbox> tiles;
@@ -563,8 +825,8 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
       tiles.push_back({std::max(lo, o.box.west), std::max(la, o.box.south), std::min(lo + TILE_DEG, o.box.east), std::min(la + TILE_DEG, o.box.north)});
   std::mutex mu;
   std::vector<Survivor> survivors;
-  std::size_t n_corr = 0, n_cons = 0, n_silent = 0;
-  double cpu_corr = 0, cpu_centre = 0;
+  std::size_t n_corr = 0, n_cons = 0, n_silent = 0, n_pp = 0, n_pk = 0;
+  double cpu_corr = 0, cpu_centre = 0, cpu_pairs = 0, cpu_silence = 0;
   auto now = [] { return std::chrono::steady_clock::now(); };
   auto secs = [](auto a, auto b) { return std::chrono::duration<double>(b - a).count(); };
   const auto t_tiles = now();
@@ -585,23 +847,71 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
       if (it != area_ok.end()) return it->second;
       return area_ok[k] = want_area(k);
     };
-    for (std::size_t ei = 0; ei < ev.size(); ++ei) {
+    // An entry's hit, or nothing when it fails the event's range, edge or clock tests.
+    auto hit_of = [&](std::size_t ei, const Entry& en) -> std::optional<Hit> {
       const Event& e = ev[ei];
       const EvPieces& ep = evp[ei];
-      // Horizontal reach: no farther than the slant range allows at the piece's height.
-      auto rho_of = [&](const Piece& pc) {
-        const double agl = std::min(pc.h_a, pc.h_b) - terrain.ground_coarse(pc.lat_a, pc.lon_a) - 300.0;
-        return std::sqrt(std::max(0.0, ep.dhi * ep.dhi - std::max(0.0, agl) * std::max(0.0, agl))) + o.cell_m;
-      };
-      corridors(ep.pieces, grid, ep.rho_max, o.mic_height, terrain, tile, want, rho_of, [&](std::uint64_t k, const Entry& en) {
-        if (en.edge || en.r < ep.dlo || en.r > ep.dhi) return;
-        const double t_rx = en.t_emit + en.r / o.c;
-        const double a = std::max(o.start_min, t_rx - e.tc_hi - o.tc_tol_s), b = std::min(o.start_max, t_rx - e.tc_lo + o.tc_tol_s);
-        if (a > b) return;
+      if (en.seg < 0 || en.edge || en.r < ep.dlo || en.r > ep.dhi) return std::nullopt;
+      const double t_rx = en.t_emit + en.r / o.c;
+      const double a = std::max(o.start_min, t_rx - e.tc_hi - o.tc_tol_s), b = std::min(o.start_max, t_rx - e.tc_lo + o.tc_tol_s);
+      if (a > b) return std::nullopt;
+      return Hit{int(ei), en.seg, en.r, en.speed, t_rx, a, b};
+    };
+    // Pair-first (two or more flyovers): a cell can only survive the one-clock test
+    // where pieces of >= min_events events overlap in space and in the start time they
+    // imply. Pieces with too few such partners are not rasterized, and the others only
+    // into cells their partners cover; the entries of cells that could still form a
+    // combination are then re-evaluated over all of their segment's pieces, so the
+    // survivors are exactly those of rasterizing everything.
+    PairStage ps;
+    if (pair_first) ps = pair_stage(ev, evp, grid, tile, o, min_events, rho_of);
+    const auto t_pairs = now();
+    for (std::size_t ei = 0; ei < ev.size(); ++ei) {
+      const EvPieces& ep = evp[ei];
+      auto rho_e = [&](const Piece& pc) { return rho_of(ei, pc); };
+      auto emit = [&](std::uint64_t k, const Entry& en) {
+        auto h = hit_of(ei, en);
+        if (!h) return;
         auto& per = cells[k];
         per.resize(ev.size());
-        per[ei].push_back({int(ei), en.seg, en.r, en.speed, t_rx, a, b});
-      });
+        per[ei].push_back(*h);
+      };
+      if (!pair_first) {
+        corridors(ep.pieces, grid, ep.rho_max, o.mic_height, terrain, tile, want, rho_e, emit);
+        continue;
+      }
+      const auto& loc = ps.local[ei];
+      std::size_t li = 0;  // the local index of the piece being rasterized (pieces in reach are all listed, in order)
+      corridors(
+          ep.pieces, grid, ep.rho_max, o.mic_height, terrain, tile,
+          [&](std::uint64_t k, std::size_t) { return want(k) && ps.mask(evp, grid, tile, min_events, ei, li, k); },
+          [&](std::size_t i) {
+            li = std::size_t(std::lower_bound(loc.begin() + std::ptrdiff_t(li), loc.end(), i, [](const LocalPiece& l, std::size_t v) { return l.pi < v; }) -
+                             loc.begin());
+            return !loc[li].keep;
+          },
+          rho_e, emit);
+    }
+    if (pair_first) {
+      for (auto& [k, per] : cells) {
+        int n_ev = 0;
+        for (auto& h : per) n_ev += !h.empty();
+        if (n_ev < min_events) continue;
+        const i64 r = CellGrid::krow(k), c = CellGrid::kcol(k);
+        for (std::size_t ei = 0; ei < per.size(); ++ei) {
+          std::vector<Hit> exact;
+          for (auto& h : per[ei]) {
+            Entry en;
+            for (std::size_t li : ps.by_seg[ei][h.seg]) {
+              const LocalPiece& l = ps.local[ei][li];
+              const Piece& pc = evp[ei].pieces[l.pi];
+              if (piece_covers(pc, l.q, grid, tile, r, c)) piece_cell(pc, l.q, grid, o.mic_height, terrain, r, c, en);
+            }
+            if (auto x = hit_of(ei, en)) exact.push_back(*x);
+          }
+          per[ei] = std::move(exact);
+        }
+      }
     }
     // 2. One clock.
     std::vector<Survivor> surv;
@@ -616,6 +926,7 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
       for (auto& s : surv) sc.insert(s.cell);
       cons = sc.size();
     }
+    const auto t_silence = now();
     // 3. Silence: another aircraft passing closer than the matched flyovers, at a time no
     //    flyover was detected (in the whole recording, or between the first and last
     //    matched flyover), would have been heard: the cell is dropped.
@@ -629,13 +940,20 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
           for (auto& [ei, sg] : s.combo) ta = std::min(ta, s.a + ev[std::size_t(ei)].tc), tb = std::max(tb, s.b + ev[std::size_t(ei)].tc);
       }
       if (tb > ta) {
-        auto pieces = make_pieces(segs, ta - silence_m / o.c - 5, tb, 6.0, [](const Seg&, double) { return true; });
+        // Only segments that can come within reach of the tile (the others' pieces all
+        // fail the corridor's reach test).
+        const Bbox reach = tile.grown(silence_m);
+        auto pieces = make_pieces(
+            segs, ta - silence_m / o.c - 5, tb, 6.0, [](const Seg&, double) { return true; }, [&](const Seg& s) { return !o.segment_bounds || overlaps(s.box, reach); });
         std::unordered_map<std::uint64_t, std::vector<std::pair<int, double>>> passes;  // cell -> (segment, reception time of CPA)
         auto want_s = [&](std::uint64_t k) { return want_cells.count(k) > 0; };
-        corridors(pieces, grid, silence_m, o.mic_height, terrain, tile, want_s, [&](const Piece&) { return silence_m + o.cell_m; },
-                  [&](std::uint64_t k, const Entry& en) {
-                    if (!en.edge && en.r <= silence_m) passes[k].emplace_back(en.seg, en.t_emit + en.r / o.c);
-                  });
+        const RowSpans spans(want_cells);  // (exact: cells outside them are not wanted)
+        corridors(
+            pieces, grid, silence_m, o.mic_height, terrain, tile, want_s, [&](const Piece&) { return silence_m + o.cell_m; },
+            [&](std::uint64_t k, const Entry& en) {
+              if (!en.edge && en.r <= silence_m) passes[k].emplace_back(en.seg, en.t_emit + en.r / o.c);
+            },
+            &spans);
         std::vector<Survivor> kept;
         for (auto& s : surv) {
           const double start = 0.5 * (s.a + s.b);
@@ -713,12 +1031,14 @@ SearchResult search(const Spectrogram& spec, const std::vector<Event>& all_event
       surv = std::move(scored);
     }
     std::lock_guard lk(mu);
-    cpu_corr += secs(t_tile, t_centre), cpu_centre += secs(t_centre, now());
-    n_corr += corr, n_cons += cons, n_silent += silent;
+    cpu_corr += secs(t_tile, t_centre), cpu_centre += secs(t_centre, now()), cpu_pairs += secs(t_tile, t_pairs);
+    cpu_silence += secs(t_silence, t_centre);
+    n_corr += corr, n_cons += cons, n_silent += silent, n_pp += ps.pieces, n_pk += ps.kept;
     survivors.insert(survivors.end(), std::make_move_iterator(surv.begin()), std::make_move_iterator(surv.end()));
   });
   res.corridor_cells = n_corr, res.consistent_cells = n_cons, res.silent_cells = n_silent;
-  res.cpu_corridors = cpu_corr, res.cpu_centre = cpu_centre, res.wall_tiles = secs(t_tiles, now());
+  res.cpu_corridors = cpu_corr, res.cpu_centre = cpu_centre, res.cpu_pairs = cpu_pairs, res.wall_tiles = secs(t_tiles, now());
+  res.pair_pieces = n_pp, res.pair_kept = n_pk, res.cpu_silence = cpu_silence;
   if (survivors.empty()) {
     res.reasons.push_back("no location heard matching aircraft at these times");
     res.terrain_complete = terrain.complete();
@@ -891,6 +1211,12 @@ std::string render_result(const SearchResult& r, const std::vector<Event>& event
   std::snprintf(b, sizeof b, "  time: tiles %.1f s (corridors %.0f cpu-s, centre scoring %.0f cpu-s), sub-grid %.1f s, refinement %.1f s\n", r.wall_tiles,
                 r.cpu_corridors, r.cpu_centre, r.wall_subgrid, r.wall_refine);
   out += b;
+  std::snprintf(b, sizeof b, "  of which: silence %.0f cpu-s; loading tracks %.1f s, cutting pieces %.1f s\n", r.cpu_silence, r.wall_load, r.wall_pieces);
+  out += b;
+  if (r.pair_pieces) {
+    std::snprintf(b, sizeof b, "  pair-first: %zu of %zu pieces rasterized (pairing %.0f cpu-s)\n", r.pair_kept, r.pair_pieces, r.cpu_pairs);
+    out += b;
+  }
   for (std::size_t i = 0; i < r.candidates.size() && i < 10; ++i) {
     auto& c = r.candidates[i];
     std::snprintf(b, sizeof b, "  #%zu  %.5f, %.5f  ground %.0f m  start %s  score %.1f\n", i + 1, c.lat, c.lon, c.ground_m, fmt_utc(c.start_utc).c_str(),

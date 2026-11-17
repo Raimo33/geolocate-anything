@@ -65,6 +65,8 @@ struct SearchOptions {
   double score_floor = -INFINITY;           // survivors whose full fit scores below this are dropped
   double window_factor = 1.0;               // scoring window: the event's half window times this,
   double max_window_s = 60.0;               //   at most this
+  bool pair_first = true;                   // >= 2 flyovers: rasterize only where pieces of enough events can meet (same result)
+  bool segment_bounds = true;               // skip segments whose speed or extent bounds rule them out (same result)
 };
 
 struct Match {
@@ -102,8 +104,11 @@ struct SearchResult {
   std::size_t type_pairs = 0, type_pruned_pairs = 0, type_pruned_segments = 0;
   bool terrain_complete = true;
   double seconds = 0;
-  double cpu_corridors = 0, cpu_centre = 0;  // thread-seconds in the tile pass
+  std::size_t pair_pieces = 0, pair_kept = 0;  // pair-first: pieces within reach of a tile, and those rasterized (summed over tiles)
+  double cpu_corridors = 0, cpu_centre = 0, cpu_pairs = 0;  // thread-seconds in the tile pass (pairs: part of corridors)
   double wall_tiles = 0, wall_subgrid = 0, wall_refine = 0;
+  double cpu_silence = 0;                // part of cpu_corridors
+  double wall_load = 0, wall_pieces = 0;  // loading tracks (search_regions), cutting them into pieces
 };
 
 SearchResult search(const Spectrogram& spec, const std::vector<Event>& events, const std::vector<Track>& segments, Terrain& terrain,
@@ -119,6 +124,14 @@ void judge(SearchResult& r);
 
 // A track's fixes as an ECEF Hermite path (empty with fewer than two usable fixes).
 Path path_of(const Track& tr);
+
+// Bounds holding every point of the path's curve and its speed, from its nodes alone
+// (the search skips segments they rule out).
+struct PathBounds {
+  Bbox box;
+  double vlo = 0, vhi = INFINITY;
+};
+PathBounds path_bounds(const Path& path);
 
 // Modelled curve score of one event for a listener at `o` (ECEF) and recording start
 // `start`: sweeps the rest frequency by +-sweep; returns {score, f0 of the strongest line}.
