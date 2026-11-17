@@ -20,7 +20,7 @@ Documentation:
 - [`docs/grids/architecture.md`](docs/grids/architecture.md): design and evaluation
 - [`docs/grids/datasets.md`](docs/grids/datasets.md): grid data sources
 - [`docs/grids/compression.md`](docs/grids/compression.md): reference store format
-- [`docs/grids/seismic.md`](docs/grids/seismic.md): grid frequency from seismometer hum (US Eastern, US Western, ERCOT, IPS/UPS, China, Western Australia and Darwin, Brazil)
+- [`docs/grids/seismic.md`](docs/grids/seismic.md): grid frequency reconstructed from seismometer hum
 - [`docs/metadata/architecture.md`](docs/metadata/architecture.md): time zone from the metadata clock (step 7)
 - [`docs/metadata/datasets.md`](docs/metadata/datasets.md): time-zone data for the metadata clue (step 7)
 
