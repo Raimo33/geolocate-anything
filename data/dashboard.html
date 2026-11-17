@@ -593,10 +593,80 @@ function showCoverage(fly = true) {
 
 // ---------------------------------------------------------------- aircraft-history overlay
 // A separate layer (own pane, above the grids, below tooltips): aircraft-minutes stored per
-// 0.5 deg cell, red (little) .. green (the best-covered cell), on a log scale.
+// 0.5 deg cell, red (little) .. green (the best-covered cell), on a log scale, drawn as one
+// smooth surface: each cell is averaged with its neighbours and the result interpolated.
 let ADSB = null, adsbReq = null;
 map.createPane("adsb").style.zIndex = 450;
-const adsbRenderer = L.canvas({ pane: "adsb", padding: 0.3 });
+// covColor as RGB, sampled 256 times, for writing pixels.
+const COV_LUT = (() => {
+  const lut = new Uint8ClampedArray(256 * 3), sat = 0.68, li = 0.47, a = sat * Math.min(li, 1 - li);
+  for (let i = 0; i < 256; i++) {
+    const h = Math.round(4 + (i / 255) * 128);
+    for (const [k, n] of [[0, 0], [1, 8], [2, 4]]) {
+      const t = (n + h / 30) % 12;
+      lut[i * 3 + k] = 255 * (li - a * Math.max(-1, Math.min(t - 3, 9 - t, 1)));
+    }
+  }
+  return lut;
+})();
+// Gaussian-weighted average over the cells that hold data (normalized convolution), sampled
+// bilinearly onto a Mercator-projected canvas, so the image lines up once Leaflet stretches it.
+function adsbSurface(j, frac) {
+  const d = j.cell_deg, pad = 4;
+  let S = Infinity, N = -Infinity, W = Infinity, E = -Infinity;
+  for (const [s, w] of j.cells) { S = Math.min(S, s); N = Math.max(N, s + d); W = Math.min(W, w); E = Math.max(E, w + d); }
+  S -= pad * d; N += pad * d; W -= pad * d; E += pad * d;
+  const nx = Math.round((E - W) / d), ny = Math.round((N - S) / d);
+  let val = new Float32Array(nx * ny), wt = new Float32Array(nx * ny);
+  for (const [s, w, m] of j.cells) {
+    const i = Math.round((s - S) / d) * nx + Math.round((w - W) / d);
+    val[i] = frac(m); wt[i] = 1;
+  }
+  const sigma = 1.2, r = 3, ker = [];
+  for (let k = -r; k <= r; k++) ker.push(Math.exp(-(k * k) / (2 * sigma * sigma)));
+  const ksum = ker.reduce((a, b) => a + b, 0);
+  const blur = (src, stride, len, count, step) => {
+    const out = new Float32Array(src.length);
+    for (let c = 0; c < count; c++) for (let p = 0; p < len; p++) {
+      let acc = 0;
+      for (let k = -r; k <= r; k++) { const q = p + k; if (q >= 0 && q < len) acc += ker[k + r] * src[c * step + q * stride]; }
+      out[c * step + p * stride] = acc / ksum;
+    }
+    return out;
+  };
+  for (let i = 0; i < val.length; i++) val[i] *= wt[i];
+  val = blur(blur(val, 1, nx, ny, nx), nx, ny, nx, 1);
+  wt = blur(blur(wt, 1, nx, ny, nx), nx, ny, nx, 1);
+  // Bilinear sample at a position in cell units (cell centres at integers).
+  const at = (g, gx, gy) => {
+    gx = Math.max(0, Math.min(nx - 1.001, gx)); gy = Math.max(0, Math.min(ny - 1.001, gy));
+    const x0 = gx | 0, y0 = gy | 0, fx = gx - x0, fy = gy - y0, i = y0 * nx + x0;
+    return (g[i] * (1 - fx) + g[i + 1] * fx) * (1 - fy) + (g[i + nx] * (1 - fx) + g[i + nx + 1] * fx) * fy;
+  };
+  const sample = (lat, lon) => {
+    const gx = (lon - W) / d - 0.5, gy = (lat - S) / d - 0.5, w = at(wt, gx, gy);
+    return { f: w > 1e-4 ? at(val, gx, gy) / w : 0, w };
+  };
+  const alpha = (w) => { const t = Math.min(1, w / 0.3); return 0.85 * t * t * (3 - 2 * t); };
+  // Rasterise in Web Mercator rows.
+  const latS = Math.max(-85, S), latN = Math.min(85, N);
+  const my = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+  const yS = my(latS), yN = my(latN);
+  const pw = Math.min(2048, nx * 4), ph = Math.min(2048, Math.max(1, Math.round((pw * (yN - yS)) / ((E - W) * Math.PI / 180))));
+  const cv = document.createElement("canvas"); cv.width = pw; cv.height = ph;
+  const ctx = cv.getContext("2d"), img = ctx.createImageData(pw, ph), px = img.data;
+  for (let y = 0; y < ph; y++) {
+    const lat = (Math.atan(Math.exp(yN - ((y + 0.5) / ph) * (yN - yS))) * 360) / Math.PI - 90;
+    for (let x = 0; x < pw; x++) {
+      const { f, w } = sample(lat, W + ((x + 0.5) / pw) * (E - W)), o = (y * pw + x) * 4;
+      if (w < 0.01) continue;
+      const c = Math.round(Math.max(0, Math.min(1, f)) * 255) * 3;
+      px[o] = COV_LUT[c]; px[o + 1] = COV_LUT[c + 1]; px[o + 2] = COV_LUT[c + 2]; px[o + 3] = 255 * alpha(w);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return { url: cv.toDataURL(), bounds: [[latS, W], [latN, E]], sample };
+}
 // Data page tabs: grid history and aircraft history get the map to themselves.
 let DATA_TAB = "grids";
 try { if (localStorage.getItem("data-tab") === "aircraft") DATA_TAB = "aircraft"; } catch {}
@@ -765,9 +835,17 @@ async function drawAdsb() {
   if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }
   const max = j.cells.reduce((m, c) => Math.max(m, c[2]), 1), lmax = Math.log1p(max), d = j.cell_deg;
   const frac = (m) => Math.log1p(m) / lmax;
-  adsbLayer = L.layerGroup(j.cells.map(([s, w, m]) => L.rectangle([[s, w], [s + d, w + d]], {
-    renderer: adsbRenderer, stroke: false, fillColor: covColor(frac(m)), fillOpacity: 0.85,
-  }).bindTooltip(`<b>Aircraft history</b><br>${hours(m)} in this ${d}° cell<br>${j.days.length} day(s) stored`, { sticky: true }))).addTo(map);
+  if (!j.cells.length) return;
+  const surf = j.surface || (j.surface = adsbSurface(j, frac));
+  const tip = (ll) => {
+    const { f, w } = surf.sample(ll.lat, ll.lng);
+    return w < 0.05 ? "<b>Aircraft history</b><br>None stored here"
+      : `<b>Aircraft history</b><br>~${hours(Math.expm1(f * lmax))} per ${d}° cell around here<br>${j.days.length} day(s) stored`;
+  };
+  adsbLayer = L.imageOverlay(surf.url, surf.bounds, { pane: "adsb", interactive: true })
+    .bindTooltip("", { sticky: true })
+    .on("mouseover mousemove", (e) => adsbLayer?.setTooltipContent(tip(e.latlng)))
+    .addTo(map);
   $("legend").innerHTML = `<div style="font-weight:600">Aircraft history (ADS-B)</div>
     <div class="ramp" style="background:linear-gradient(90deg,${[0, .25, .5, .75, 1].map(covColor).join(",")})"></div>
     <div class="ramp-k"><span>1 aircraft-min</span><span>${esc(hours(max))}</span></div>`;
