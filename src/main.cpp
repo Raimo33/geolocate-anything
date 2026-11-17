@@ -267,7 +267,7 @@ int cmd_refs_refresh(std::vector<std::string> grids, bool progress) {
   return rc;
 }
 
-int cmd_refs_sync(bool is_push, const std::string& grid, bool progress) {
+int cmd_refs_sync(bool is_push, const std::string& grid, bool progress, bool lazy) {
   if (!refs::remote::enabled()) {
     std::cerr << "no bucket configured: set GEOLOC_GRID_BUCKET (and GEOLOC_S3_ENDPOINT_URL, GEOLOC_GRID_ACCESS_KEY_ID, GEOLOC_GRID_SECRET_ACCESS_KEY)" << std::endl;
     if (progress) say(json::object{{"error", "no bucket configured"}});
@@ -279,7 +279,8 @@ int cmd_refs_sync(bool is_push, const std::string& grid, bool progress) {
   }
   try {
     int n = refs::remote::pull(grid, progress ? std::function<void(int, int)>([](int d, int t) { say(json::object{{"done", d}, {"total", t}}); })
-                                              : std::function<void(int, int)>());
+                                              : std::function<void(int, int)>(),
+                               lazy);
     if (progress) say(json::object{{"files", n}});
     else std::printf("%d file(s) downloaded\n", n);
     return 0;
@@ -373,7 +374,7 @@ int main(int argc, char** argv) {
   refs->require_subcommand(1);
   std::string r_source, r_grid, r_months;
   std::vector<std::string> r_grids;
-  bool r_force = false, r_progress = false;
+  bool r_force = false, r_progress = false, r_lazy = false;
 
   auto* rf = refs->add_subcommand("fetch", "download reference months");
   rf->add_option("source", r_source, "a source name from `refs list` (neso, netztransparenz, aemo_fpp, ...)")->required();
@@ -397,8 +398,11 @@ int main(int argc, char** argv) {
     auto* s = refs->add_subcommand(name, desc);
     s->add_option("--grid", r_grid, "only this grid");
     bool is_push = std::string(name) == "push";
-    if (!is_push) s->add_flag("--progress-json", r_progress)->group("");
-    s->callback([&, is_push] { rc = cmd_refs_sync(is_push, r_grid, r_progress); });
+    if (!is_push) {
+      s->add_flag("--progress-json", r_progress)->group("");
+      s->add_flag("--lazy", r_lazy, "manifests only: month files are downloaded when first read");
+    }
+    s->callback([&, is_push] { rc = cmd_refs_sync(is_push, r_grid, r_progress, r_lazy); });
   }
   auto* rl = refs->add_subcommand("list", "show stored references and sources");
   rl->callback([&] { rc = cmd_refs_list(); });
@@ -417,6 +421,7 @@ int main(int argc, char** argv) {
   // aircraft
   air::register_commands(app, rc);
 
+  refs::remote::install();  // with a bucket, months not stored here are read from it
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {

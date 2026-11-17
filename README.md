@@ -316,7 +316,7 @@ geoloc serve                                    # web dashboard on http://127.0.
 | `geoloc refs refresh [--grid G]` | Fetch every month not stored yet (all grids by default) |
 | `geoloc refs fetch SOURCE --grid G --months A:B [--force]` | Fetch specific months |
 | `geoloc refs list` | Stored references and sources |
-| `geoloc refs push \| pull` | Sync the store with the bucket |
+| `geoloc refs push \| pull [--lazy]` | Sync the store with the bucket (`--lazy`: manifests and each source's newest month; the rest come on first read) |
 | `geoloc refs import-aemo FILE...` | Import AEMO's hand-downloaded yearly workbooks |
 | `geoloc locate FILE [--aircraft auto\|on\|off] [--aircraft-bbox W,S,E,N] [--aircraft-fetch]` | Hum and aircraft together |
 | `geoloc aircraft events FILE [--json out]` | Flyovers in a recording (CPA time, speed, slant distance, rest frequency) |
@@ -330,7 +330,12 @@ days under `adsb/` there (~50 MB each), DEM tiles under `dem/`.
 
 Environment (all optional): `GEOLOC_GRID_BUCKET` with `GEOLOC_S3_ENDPOINT_URL`, `GEOLOC_GRID_ACCESS_KEY_ID`,
 `GEOLOC_GRID_SECRET_ACCESS_KEY`, `GEOLOC_S3_REGION` mirrors the store to an S3 bucket (and
-`refs refresh` uploads to it); `GEOLOC_ADMIN_TOKEN` gates the dashboard's Refresh and
+`refs refresh` uploads to it); with it, a month a manifest lists but this machine lacks is
+downloaded when first read (a search first fetches every month of its candidate grids,
+16 at a time), so the dashboard keeps no copy of its own: on start it pulls only the
+manifests and each source's newest month (`refs pull --lazy`); `GEOLOC_REFS_KEEP_MB` bounds the local copy, evicting the
+months fetched from the bucket that were not read for 10 minutes (months written here stay
+until uploaded); `GEOLOC_ADMIN_TOKEN` gates the dashboard's Refresh and
 import; `GEOLOC_EARTHSCOPE_REFRESH_TOKEN` enables the EarthScope seismic refreshes (`seismic_east`,
 `seismic_ips`; the anonymous EarthScope quota cannot backfill); `GEOLOC_US_SEISMIC_REFRESH`
 (with the token) enables `seismic_west` and `seismic_ercot`, ~1.3 TB of download to
@@ -355,7 +360,10 @@ resampled in 30 s chunks on them (the same samples as one pass), and the faint-h
 ridge test scores its off-grid nulls on them.
 
 On Railway the dashboard sleeps when idle (`sleepApplication` in `railway.json`) and wakes
-on the next request. To keep crawlers from waking it, `serve` answers `/robots.txt` with
+on the next request. It needs no volume: `$GEOLOC_CACHE` (`/data`) is the container's
+ephemeral disk, filled from the buckets as analyses need it, so the first search after a
+wake or deploy also downloads its candidate grids' months (on the order of 1 GB for a
+50 Hz recording); later ones read them from local disk as before. To keep crawlers from waking it, `serve` answers `/robots.txt` with
 `Disallow: /` and sends `X-Robots-Tag: noindex, nofollow, noarchive` on every response.
 
 ## Building

@@ -114,4 +114,21 @@ std::uint64_t disk_usage(const std::string& grid = {});
 
 void invalidate_caches();  // after files changed behind our back (bucket pull)
 
+// ---------------------------------------------------------------- months kept in a bucket
+// With a bucket (refs::remote::install), the local store is only a cache: a month a manifest
+// lists but whose file is not here is downloaded when first read, and copies fetched from
+// the bucket and not changed since ("clean": mtime CLEAN_MTIME, so they never look newer
+// than the bucket's) can be evicted. fetch(rels) downloads what it can of these
+// refs_dir()-relative paths.
+inline constexpr std::int64_t CLEAN_MTIME = 1;
+void set_month_fetcher(std::function<void(const std::vector<std::string>&)> fetch);
+// Every month of these grids overlapping [from, to) that a manifest lists and this store
+// lacks, downloaded in one parallel batch (before a search reads them all). Then evicts.
+void prefetch(const std::vector<std::string>& grids, std::optional<i64> from = {}, std::optional<i64> to = {});
+void mark_clean(const fs::path& p);  // the file equals the bucket's copy
+bool is_clean(const fs::path& p);
+// Removes clean month files not opened in the last 10 minutes, least recently opened
+// first, until the month files here take at most GEOLOC_REFS_KEEP_MB (unset or 0: no limit).
+void evict_months();
+
 }  // namespace geo::store

@@ -1125,6 +1125,7 @@ std::vector<GridResult> search_grid(std::span<const ENFTrace* const> traces, con
     std::vector<std::size_t> active;  // indices into qs
   };
   std::vector<Job> jobs;
+  store::prefetch({grid}, o.from, o.to);  // months held only in the bucket (no-op when all are here)
   const auto spans = store::coverage_intervals(grid);
   for (auto& [key, members] : groups) {
     std::vector<char> active(qs.size(), 0);

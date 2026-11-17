@@ -1,5 +1,7 @@
 // Bucket mirror of the reference store, against a fake S3 server in a child process.
 #include <signal.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <openssl/evp.h>
@@ -109,6 +111,7 @@ class Bucket : public test::TempStore {
     ::setenv("GEOLOC_AIRPLANE_SECRET_ACCESS_KEY", "x", 1);
   }
   void TearDown() override {
+    store::set_month_fetcher({});
     ::kill(pid_, SIGKILL);
     ::waitpid(pid_, nullptr, 0);
     for (auto v : {"GEOLOC_GRID_BUCKET", "GEOLOC_S3_ENDPOINT_URL", "GEOLOC_AIRPLANE_BUCKET"}) ::unsetenv(v);
@@ -200,4 +203,41 @@ TEST_F(Bucket, AdsbDaysGoToTheirBucketAndComeBackOnDemand) {
   ASSERT_EQ(back.size(), 1u);
   EXPECT_EQ(back[0].fixes.size(), 2u);  // a straight, steady line: its two ends
   EXPECT_FALSE(air::bucket::pull_day("2026-01-03"));
+}
+
+// A server whose store is only a cache of the bucket: a lazy pull brings the manifests,
+// months come on first read (or a prefetch) as clean copies, and only those are evicted.
+TEST_F(Bucket, LazyStoreReadsMonthsFromTheBucketAndEvictsCleanCopies) {
+  month("great_britain", "2026-09", 0.01f);
+  month("great_britain", "2026-10", 0.02f);
+  EXPECT_EQ(refs::remote::push(), 3);
+  const auto file = [](const char* m) { return store::refs_dir() / "great_britain" / "neso" / (std::string(m) + ".u16z"); };
+  EXPECT_TRUE(store::is_clean(file("2026-09")));  // uploaded: the bucket holds the same
+  wipe_local();
+  EXPECT_EQ(refs::remote::pull("", {}, true), 2);  // the manifest and the newest month
+  EXPECT_FALSE(fs::exists(file("2026-09")));
+  fs::remove(file("2026-10"));
+  EXPECT_TRUE(store::has_month("great_britain", "neso", "2026-09"));
+  refs::remote::install();
+  auto [a, b] = month_bounds("2026-09");
+  EXPECT_NEAR(store::read("great_britain", a, a + 1)[0], 0.01, 1e-4);  // fetched on first read
+  EXPECT_TRUE(store::is_clean(file("2026-09")));
+  store::prefetch({"great_britain"});
+  EXPECT_TRUE(fs::exists(file("2026-10")));
+  // A write makes a month dirty: kept until pushed. Clean ones go once not read for 10 min.
+  month("great_britain", "2026-10", 0.03f);
+  EXPECT_FALSE(store::is_clean(file("2026-10")));
+  struct timespec old[2] = {{::time(nullptr) - 3600, 0}, {store::CLEAN_MTIME, 0}};
+  ::utimensat(AT_FDCWD, file("2026-09").c_str(), old, 0);
+  ::setenv("GEOLOC_REFS_KEEP_MB", "1", 1);
+  // Ensure the cap is exceeded whatever the files' sizes: pad with a large dirty file.
+  atomic_write(store::refs_dir() / "great_britain" / "neso" / "2026-11.u16z", std::string(2 << 20, 'x'));
+  store::evict_months();
+  ::unsetenv("GEOLOC_REFS_KEEP_MB");
+  EXPECT_FALSE(fs::exists(file("2026-09")));
+  EXPECT_TRUE(fs::exists(file("2026-10")));
+  fs::remove(file("2026-11"));
+  store::invalidate_caches();
+  EXPECT_NEAR(store::read("great_britain", a, a + 1)[0], 0.01, 1e-4);  // back from the bucket
+  store::set_month_fetcher({});
 }

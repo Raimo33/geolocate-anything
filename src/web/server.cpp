@@ -247,7 +247,8 @@ class Refresher {
     int files = 0;
     std::string error;
     // (named, not inline: GCC 15 has an internal error on braced lists inside co_await)
-    std::vector<std::string> pull_argv{exe, "refs", "pull", "--progress-json"};
+    // Manifests only: the bucket is the store, months come here when a search reads them.
+    std::vector<std::string> pull_argv{exe, "refs", "pull", "--lazy", "--progress-json"};
     std::function<void(std::string_view)> on_line = [&](std::string_view line) {
       try {
         auto v = parse_json(line);
@@ -795,6 +796,10 @@ asio::awaitable<void> listen(App& app, tcp::endpoint ep) {
 }  // namespace
 
 void serve(const std::string& host, int port) {
+  // The event loop never waits on the bucket: this process reads only what is here (the
+  // start-up pull brings each source's newest month); searches and refreshes run in child
+  // processes, which fetch the months they read.
+  store::set_month_fetcher({});
   asio::io_context io;
   App app(io);
   auto addr = asio::ip::make_address(host == "localhost" ? "127.0.0.1" : host);

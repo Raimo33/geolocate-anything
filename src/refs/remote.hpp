@@ -27,7 +27,14 @@ bool enabled();
 //    the entry stored later winning), so one machine's months never drop another's.
 // Download every object missing locally or older here; manifests last, merged with the
 // local ones. progress(done, total).
-int pull(const std::string& grid = {}, std::function<void(int, int)> progress = {});
+// lazy: manifests and each source's newest month only (the rest come later, on first read; a local copy the bucket
+// has replaced since is dropped), for a server whose store is just a cache of the bucket.
+int pull(const std::string& grid = {}, std::function<void(int, int)> progress = {}, bool lazy = false);
+// Downloads these refs-relative month files from the bucket, 16 at a time, as clean copies;
+// returns how many the bucket had.
+int fetch(const std::vector<std::string>& rels);
+// With a bucket configured: months missing here are read from it (store::set_month_fetcher).
+void install();
 // Upload every local file missing in the bucket or newer here; months first, manifests
 // last (merged with the bucket's). Returns the files uploaded.
 int push(const std::string& grid = {});

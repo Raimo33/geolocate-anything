@@ -250,6 +250,7 @@ void search_all(std::vector<Work*>& works, const AnalyzeOptions& o) {
         by_grid[g].push_back({w, h});
       }
   }
+  store::prefetch(grid_order, so.from, so.to);  // every candidate grid's months, in one parallel batch
   for (auto& g : grid_order) {
     if (store::coverage_intervals(g).empty()) continue;
     auto& refs = by_grid[g];

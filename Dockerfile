@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Dashboard image (geoloc serve). Reference data lives in a bucket (GEOLOC_GRID_BUCKET): the
-# container downloads it on start and uploads what its refreshes fetch.
+# container pulls its manifests on start, downloads months as searches read them into
+# /data (ephemeral disk; no volume needed) and uploads what its refreshes fetch.
 #
 # Railway's layer cache and BuildKit cache mounts survive only while a deploy lands on the
 # same builder, so the slow parts live in cache mounts (the apt archives, the FFmpeg install

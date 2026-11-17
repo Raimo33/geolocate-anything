@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <cstring>
 #include <cmath>
+#include <ctime>
 #include <list>
 #include <mutex>
 #include <map>
@@ -63,6 +64,19 @@ static fs::path month_path(const std::string& grid, const std::string& source, c
 // our own writes; invalidate_caches() drops them (e.g. after a bucket pull).
 
 namespace {
+// Guards manifest_cache(): search threads look manifests up when a month is missing here.
+// Entries are node-stable, so references handed out stay valid until invalidate_caches().
+std::recursive_mutex manifest_mu;
+std::function<void(const std::vector<std::string>&)>& month_fetcher() {
+  static std::function<void(const std::vector<std::string>&)> f;
+  return f;
+}
+bool listed(const std::string& grid, const std::string& source, const std::string& month);
+void touch_read(const fs::path& p) {  // atime = last opened (eviction order); mtime kept
+  struct timespec ts[2] = {{0, UTIME_NOW}, {0, UTIME_OMIT}};
+  ::utimensat(AT_FDCWD, p.c_str(), ts, 0);
+}
+
 std::unordered_map<std::string, json::object>& manifest_cache() {
   static std::unordered_map<std::string, json::object> c;
   return c;
@@ -75,21 +89,46 @@ std::unordered_map<std::string, json::object>& manifest_cache() {
 struct MonthCache {
   static constexpr std::size_t CAP = 64;
   std::mutex mu;
+  std::mutex fetch_mu;  // single-file fetches, one at a time
   std::list<std::pair<std::string, std::shared_ptr<MonthFile>>> lru;
+  std::set<std::string> not_in_bucket;  // listed, yet the bucket had no file
   std::shared_ptr<MonthFile> get(const std::string& grid, const std::string& source, const std::string& month) {
     fs::path p = month_path(grid, source, month);
     std::string key = p.string();
-    std::lock_guard lk(mu);
-    for (auto it = lru.begin(); it != lru.end(); ++it) {
-      if (it->first == key) {
-        lru.splice(lru.begin(), lru, it);
-        return lru.front().second;
+    {
+      std::lock_guard lk(mu);
+      for (auto it = lru.begin(); it != lru.end(); ++it) {
+        if (it->first == key) {
+          lru.splice(lru.begin(), lru, it);
+          return lru.front().second;
+        }
       }
     }
     struct stat st{};
-    if (::stat(p.c_str(), &st) != 0) return nullptr;
+    if (::stat(p.c_str(), &st) != 0) {
+      // Listed but not here: from the bucket, one file at a time (a search prefetches its
+      // grids in parallel first, so this is the rare path).
+      if (!month_fetcher() || !listed(grid, source, month)) return nullptr;
+      std::lock_guard fl(fetch_mu);
+      {
+        std::lock_guard lk(mu);
+        if (not_in_bucket.contains(key)) return nullptr;
+      }
+      if (::stat(p.c_str(), &st) != 0) {
+        month_fetcher()({fs::relative(p, refs_dir()).generic_string()});
+        if (::stat(p.c_str(), &st) != 0) {
+          std::lock_guard lk(mu);
+          not_in_bucket.insert(key);
+          return nullptr;
+        }
+      }
+    }
+    touch_read(p);
     auto [a, b] = month_bounds(month);
     auto mf = std::make_shared<MonthFile>(p, a, b);
+    std::lock_guard lk(mu);
+    for (auto& e : lru)
+      if (e.first == key) return e.second;  // another thread opened it meanwhile
     lru.emplace_front(key, mf);
     if (lru.size() > CAP) lru.pop_back();
     return mf;
@@ -102,6 +141,7 @@ struct MonthCache {
   void clear() {
     std::lock_guard lk(mu);
     lru.clear();
+    not_in_bucket.clear();
   }
 };
 MonthCache& month_cache() {
@@ -111,12 +151,16 @@ MonthCache& month_cache() {
 }  // namespace
 
 void invalidate_caches() {
-  manifest_cache().clear();
+  {
+    std::lock_guard lk(manifest_mu);
+    manifest_cache().clear();
+  }
   month_cache().clear();
 }
 
 static const json::object& manifest_ref(const std::string& grid, const std::string& source) {
   fs::path p = src_dir(grid, source) / "manifest.json";
+  std::lock_guard lk(manifest_mu);
   auto& c = manifest_cache();
   auto it = c.find(p.string());
   if (it != c.end()) return it->second;
@@ -153,11 +197,14 @@ void update_manifest(const std::string& grid, const std::string& source, const s
   } unlock{fd};
   while (::flock(fd, LOCK_EX) != 0)
     if (errno != EINTR) throw std::runtime_error("cannot lock " + lp.string());
+  std::unique_lock ml(manifest_mu);
   manifest_cache().erase(p.string());
   json::object man = manifest_ref(grid, source);  // fresh from disk
+  ml.unlock();
   const json::object before = man;
   change(man);
   if (man != before || !fs::exists(p)) atomic_write(p, dump(man, {.indent = 1, .sort_keys = true}));
+  ml.lock();
   manifest_cache()[p.string()] = std::move(man);
 }
 
@@ -189,6 +236,13 @@ static const json::object& months_of(const json::object& man) {
   auto* m = man.if_contains("months");
   return m && m->is_object() ? m->get_object() : empty;
 }
+
+namespace {
+bool listed(const std::string& grid, const std::string& source, const std::string& month) {
+  std::lock_guard lk(manifest_mu);
+  return months_of(manifest_ref(grid, source)).contains(month);
+}
+}  // namespace
 
 bool has_month(const std::string& grid, const std::string& source, const std::string& month) {
   return months_of(manifest_ref(grid, source)).contains(month);
@@ -294,7 +348,7 @@ static void write_codes(const std::string& grid, const std::string& source, i64 
     std::size_t n = std::min<std::size_t>(codes.size() - i, std::size_t(m.t1() - t));
     std::span<const std::uint16_t> seg(codes.data() + i, n);
     const bool data = std::any_of(seg.begin(), seg.end(), [](auto c) { return c != codec::MISSING; });
-    if (data || (replace && fs::exists(month_path(grid, source, m.key()))))  // nothing to clear in a month never written
+    if (data || (replace && month_cache().get(grid, source, m.key())))  // nothing to clear in a month never written
       merge_month(grid, source, m.key(), t, seg, replace);
     t += i64(n);
     i += n;
@@ -487,6 +541,67 @@ std::uint64_t disk_usage(const std::string& grid) {
     if (::stat(e.path().c_str(), &st) == 0) total += std::uint64_t(st.st_blocks) * 512;
   }
   return total;
+}
+
+// ---------------------------------------------------------------- months kept in a bucket
+
+void set_month_fetcher(std::function<void(const std::vector<std::string>&)> fetch) { month_fetcher() = std::move(fetch); }
+
+void prefetch(const std::vector<std::string>& grids, std::optional<i64> from, std::optional<i64> to) {
+  if (!month_fetcher()) return;
+  std::vector<std::string> rels;
+  struct stat st{};
+  for (auto& g : grids)
+    for (auto& s : sources_for(g))
+      for (auto& kv : months_of(manifest_ref(g, s))) {
+        const std::string month(kv.key());
+        auto [a, b] = month_bounds(month);
+        if ((from && b <= *from) || (to && a >= *to)) continue;
+        fs::path p = month_path(g, s, month);
+        if (::stat(p.c_str(), &st) != 0) rels.push_back(fs::relative(p, refs_dir()).generic_string());
+      }
+  if (!rels.empty()) month_fetcher()(rels);
+  evict_months();
+}
+
+void mark_clean(const fs::path& p) {
+  struct timespec ts[2] = {{0, UTIME_NOW}, {CLEAN_MTIME, 0}};
+  ::utimensat(AT_FDCWD, p.c_str(), ts, 0);
+}
+
+bool is_clean(const fs::path& p) {
+  struct stat st{};
+  return ::stat(p.c_str(), &st) == 0 && st.st_mtim.tv_sec == CLEAN_MTIME && st.st_mtim.tv_nsec == 0;
+}
+
+void evict_months() {
+  const std::uint64_t cap = std::uint64_t(std::max(0LL, std::atoll(env("GEOLOC_REFS_KEEP_MB").c_str()))) << 20;
+  if (!cap) return;
+  struct File {
+    fs::path p;
+    std::uint64_t bytes;
+    std::int64_t atime;
+  };
+  std::vector<File> clean;
+  std::uint64_t total = 0;
+  const std::int64_t recent = std::int64_t(::time(nullptr)) - 600;  // still being read by a search
+  std::error_code ec;
+  for (auto& e : fs::recursive_directory_iterator(refs_dir(), ec)) {
+    if (!e.is_regular_file(ec) || e.path().extension() != ".u16z") continue;
+    struct stat st{};
+    if (::stat(e.path().c_str(), &st) != 0) continue;
+    const auto bytes = std::uint64_t(st.st_blocks) * 512;
+    total += bytes;
+    if (st.st_mtim.tv_sec == CLEAN_MTIME && st.st_mtim.tv_nsec == 0 && st.st_atim.tv_sec < recent)
+      clean.push_back({e.path(), bytes, st.st_atim.tv_sec});
+  }
+  if (total <= cap) return;
+  std::sort(clean.begin(), clean.end(), [](auto& a, auto& b) { return a.atime < b.atime; });
+  for (auto& f : clean) {
+    if (total <= cap) break;
+    if (fs::remove(f.p, ec)) total -= f.bytes;  // a reader's map stays valid; the next open refetches
+    month_cache().drop(f.p);
+  }
 }
 
 }  // namespace geo::store
