@@ -313,7 +313,7 @@ reference data.
 
 ### Run it yourself
 
-With Docker (no toolchain needed):
+With Docker:
 
 ```bash
 git clone https://github.com/Raimo33/geolocate-anything.git && cd geolocate-anything
@@ -322,22 +322,8 @@ docker run --rm -p 8000:8000 -v geoloc-data:/data geoloc                    # da
 docker run --rm -v geoloc-data:/data geoloc geoloc refs refresh --grid great_britain
 ```
 
-From source on Ubuntu 24.04 (other systems: the packages listed under [Building](#building)):
-
-```bash
-sudo apt-get install -y clang-20 ninja-build cmake pkg-config ffmpeg \
-  libboost1.83-dev libcli11-dev libcurl4-openssl-dev libzstd-dev libfftw3-dev libarchive-dev \
-  libssl-dev zlib1g-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev libgtest-dev
-git clone https://github.com/Raimo33/geolocate-anything.git && cd geolocate-anything
-cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-20
-cmake --build build                                   # -> build/geoloc
-build/geoloc refs refresh --grid great_britain        # download one grid's reference data
-build/geoloc locate recording.mp4 --json report.json  # analyse a file
-build/geoloc serve                                    # dashboard on http://127.0.0.1:8000
-```
-
 A self-hosted copy downloads reference data from the public sources into its own cache
-(`~/.cache/geolocate-anything`, or `/data` in Docker); buckets and tokens are optional (see
+(the `geoloc-data` volume); buckets and tokens are optional (see
 the environment variables below).
 
 ## Usage
