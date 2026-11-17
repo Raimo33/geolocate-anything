@@ -272,11 +272,24 @@ strong, and at its second the aircraft find the place over the whole US Eastern 
 and heading at closest approach, registry details on click) and each flyover's
 spectrogram with the curve modelled from the aircraft's track.
 
+### Edited files
+
+When the hum finds edit points, each clip gets its own spectrogram and flyovers (no
+template straddles a cut) and its own clock: a clip whose hum located gives its second,
+where one flyover suffices; otherwise its hum candidates or the date window, two
+flyovers. The clips' order and the gaps between them are unknown, so only the place is
+shared (the camera is assumed not to have moved). Each clip's best answers (and, for a
+single flyover, their mirror image across the aircraft's track) are tried as the place;
+every clip is searched again within 1 km of each, and the place with the most evidence
+is refined to one point where every clip's clock is fitted. The report gives each clip's
+start time and aircraft, and flags a clip that, searched alone, located elsewhere.
+
 ### Limits
 
 - Only aircraft with ADS-B in ADSB.lol's coverage; jets are excluded.
 - A time window is needed: a day for two or more flyovers, seconds for one.
-- Edited files (cuts) are not searched; wind and refraction are not modelled.
+- Edited files: a clip with one flyover needs its own hum second; the camera is assumed
+  not to move between clips. Wind and refraction are not modelled.
 
 ## 3. Church bells
 

@@ -13,6 +13,7 @@
 #include "air/adsb.hpp"
 #include "air/doppler.hpp"
 #include "air/events.hpp"
+#include "air/fusion.hpp"
 #include "air/geodesy.hpp"
 #include "air/search.hpp"
 #include "air/spectrogram.hpp"
@@ -421,4 +422,82 @@ TEST(AircraftSearch, FindsTheListenerFromTwoFlyovers) {
   auto r1 = search(spec, det.events, split_tracks(tracks), terrain, so);
   ASSERT_FALSE(r1.candidates.empty());
   EXPECT_LT(haversine_m(r1.candidates[0].lat, r1.candidates[0].lon, lat0, lon0), 150.0);
+}
+
+TEST(AircraftSearch, EditedRecordingClipsShareOnePlace) {
+  // The recording of FindsTheListenerFromTwoFlyovers, edited: its second half first, then
+  // its first half. Each clip holds one flyover and has its own clock (known to +-3 s, as
+  // from each clip's own hum match); the place is shared. One flyover alone leaves a strip
+  // on both sides of its track: the other clip decides.
+  const double lat0 = 40.0, lon0 = -100.0, start = 1767261600.0;
+  const Enu f(lat0, lon0, 0.0);
+  const double tA = start + 300, tB = start + 900;
+  Straight A{f, {0, 1800, 1200}, {120, 0, 0}, tA - std::hypot(1800.0, 1200.0 - 2.0) / SOUND_SPEED};
+  Straight B{f, {900, 0, 800}, {0, -90, 0}, tB - std::hypot(900.0, 800.0 - 2.0) / SOUND_SPEED};
+  Straight C{f, {-5000, 25000, 1200}, {120, 0, 0}, tA - 6};
+  Straight D{f, {-15000, 8000, 800}, {0, -90, 0}, tB + 40};
+  std::vector<Track> tracks = {track_of(A, 0xa00010, "C172", start - 400, start + 1600), track_of(B, 0xa00011, "C172", start - 400, start + 1600),
+                               track_of(C, 0xa00012, "C172", start - 400, start + 1600), track_of(D, 0xa00013, "C172", start - 400, start + 1600)};
+  const Vec3 o = ecef(lat0, lon0, 2.0);
+  auto x = render({{ecef_path(tracks[0]), {105.0, 210.0}}, {ecef_path(tracks[1]), {92.0}}}, o, start, 1200, 0.5, 1.0, 3);
+  const std::size_t half = 600 * SPEC_RATE;
+  std::vector<double> edited(x.begin() + std::ptrdiff_t(half), x.end());
+  edited.insert(edited.end(), x.begin(), x.begin() + std::ptrdiff_t(half));
+  // Per clip, as run_aircraft_clips does: its own spectrogram and flyovers.
+  const double clip_start[2] = {start + 600, start};  // clip 1 is the original 600-1200 s
+  std::vector<Spectrogram> specs;
+  for (int i = 0; i < 2; ++i) specs.push_back(whitened_spectrogram(std::span<const double>(edited.data() + std::size_t(i) * half, half)));
+  std::vector<ClipInput> in(2);
+  const Bbox box{lon0 - 0.4, lat0 - 0.3, lon0 + 0.4, lat0 + 0.3};
+  for (int i = 0; i < 2; ++i) {
+    in[std::size_t(i)].spec = &specs[std::size_t(i)];
+    in[std::size_t(i)].events = detect_events(specs[std::size_t(i)]).events;
+    ASSERT_GE(in[std::size_t(i)].events.size(), 1u) << i;
+    // The strongest flyover of each clip is its own pass, CPA 300 s into the clip.
+    auto& ev = in[std::size_t(i)].events;
+    auto strongest = *std::max_element(ev.begin(), ev.end(), [](auto& a, auto& b) { return a.score < b.score; });
+    EXPECT_NEAR(strongest.tc, 300.0, 3.0) << i;
+    in[std::size_t(i)].hyps.push_back({"clip hum", std::nullopt, clip_start[i] - 3, clip_start[i] + 3, 1, box});
+  }
+  Terrain terrain(false);
+  auto j = search_clips(in, [&](const Bbox&, double, double) { return split_tracks(tracks); }, terrain);
+  ASSERT_TRUE(j.shared);
+  EXPECT_LT(haversine_m(j.shared->lat, j.shared->lon, lat0, lon0), 150.0) << j.shared->lat << ", " << j.shared->lon;
+  EXPECT_EQ(j.shared->clips_matched, 2);
+  EXPECT_FALSE(j.shared->disagree);
+  EXPECT_GE(j.shared->level, AirLevel::Moderate);
+  const char* flight[2] = {"a00011", "a00010"};
+  for (int i = 0; i < 2; ++i) {
+    const auto& oc = j.clips[std::size_t(i)];
+    ASSERT_TRUE(oc.at_place) << i;
+    EXPECT_NEAR(oc.start_utc, clip_start[i], 0.5) << i;
+    ASSERT_EQ(oc.at_place->candidates[0].matches.size(), 1u) << i;
+    EXPECT_EQ(oc.at_place->candidates[0].matches[0].flight, flight[i]) << i;
+  }
+  // As one stage (the report's `aircraft`): flyovers in file time, per-clip clocks.
+  seed_tables();
+  std::vector<ClipSpan> spans = {{0, 0.0, 600.0, {}}, {1, 600.0, 1200.0, {}}};
+  const auto st = clips_stage(spans, in, j);
+  const auto js = parse_json(json::serialize(stage_json(st)));
+  ASSERT_EQ(js.at("clips").as_array().size(), 2u);
+  for (int i = 0; i < 2; ++i) {
+    const auto& c = js.at("clips").as_array()[std::size_t(i)];
+    EXPECT_NEAR(as_number(c.at("start_epoch")), clip_start[i], 0.5);
+    EXPECT_EQ(c.at("matches").as_array()[0].at("flight").as_string(), flight[i]);
+  }
+  EXPECT_TRUE(js.at("best").at("clips").as_bool());
+  ASSERT_EQ(js.at("flights").as_array().size(), 2u);
+  for (auto& fl : js.at("flights").as_array()) {
+    const int clip = int(as_number(fl.at("clip")));
+    const auto& e = js.at("events").as_array()[std::size_t(as_number(fl.at("event")))];
+    EXPECT_EQ(int(as_number(e.at("clip"))), clip);
+    EXPECT_NEAR(as_number(e.at("tc_s")), 300.0 + 600.0 * clip, 3.0);  // file time
+    EXPECT_EQ(fl.at("flight").as_string(), flight[clip]);
+  }
+  for (auto& sp : js.at("spectra").as_array())
+    if (sp.at("matched").as_bool()) {
+      // UTC at file time t: the clip's start + (t - the clip's offset in the file).
+      const int clip = int(as_number(sp.at("clip")));
+      EXPECT_NEAR(as_number(sp.at("utc0")) + 600.0 * clip, clip_start[clip], 0.5);
+    }
 }

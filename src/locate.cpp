@@ -422,6 +422,43 @@ static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
   }
 }
 
+// An edited file: each clip's own hum result sets its clock (a located clip's second, one
+// flyover enough; else its best few hum alignments, or the date window, two flyovers);
+// the clips share one place, their clocks are unrelated.
+static void add_aircraft_clips(Report& rep, const AnalyzeOptions& o) {
+  using AM = AnalyzeOptions::Aircraft;
+  if (o.aircraft == AM::Off) return;
+  const bool fetch = o.aircraft_fetch || !env("GEOLOC_AIRPLANE_FETCH").empty();
+  if (o.aircraft == AM::Auto && air::stored_days().empty() && !fetch && !air::bucket::enabled()) return;
+  const auto a = parse_time(o.from), b = parse_time(o.to);
+  std::vector<air::ClipSpan> clips;
+  for (auto& sg : rep.segments) {
+    air::ClipSpan c;
+    c.index = sg.index, c.start_s = sg.start_s, c.end_s = sg.end_s;
+    const auto& v = sg.match.verdict;
+    if (v && match::located(v->level) && v->candidate) {
+      c.hyps.push_back({std::string("hum match (") + match::level_name(v->level) + ")", v->candidate->grid, v->candidate->start_utc - 3,
+                        v->candidate->start_utc + 3, 1, {}});
+    } else {
+      std::vector<const match::Candidate*> cs;
+      for (auto& g : sg.match.results)
+        for (std::size_t i = 0; i < std::min<std::size_t>(3, g.candidates.size()); ++i)
+          if (g.candidates[i].consistent()) cs.push_back(&g.candidates[i]);
+      std::sort(cs.begin(), cs.end(), [](auto* x, auto* y) { return x->score > y->score; });
+      for (std::size_t i = 0; i < std::min<std::size_t>(3, cs.size()); ++i)
+        c.hyps.push_back({"hum candidate #" + std::to_string(i + 1) + " (r = " + pyf(cs[i]->r, "%.2f") + ")", cs[i]->grid, cs[i]->start_utc - 3,
+                          cs[i]->start_utc + 3, 2, {}});
+      if (a && b) c.hyps.push_back({"time window", std::nullopt, double(*a), double(*b), 2, {}});
+    }
+    clips.push_back(std::move(c));
+  }
+  air::AircraftOptions ao;
+  if (o.aircraft_box) ao.box = air::Bbox{(*o.aircraft_box)[0], (*o.aircraft_box)[1], (*o.aircraft_box)[2], (*o.aircraft_box)[3]};
+  ao.fetch = fetch;
+  if (!o.aircraft_fetch && fetch) ao.max_days = std::max(1, std::atoi(env("GEOLOC_AIRPLANE_MAX_FETCH", "1").c_str()));
+  rep.aircraft = air::run_aircraft_clips(rep.path, clips, ao);
+}
+
 // ---------------------------------------------------------------- analyze
 
 Report analyze(const std::string& path, const AnalyzeOptions& o) {
@@ -500,8 +537,7 @@ Report analyze(const std::string& path, const AnalyzeOptions& o) {
                          " separately recorded segments, each located on its own. Metadata times describe the edited file, not the clips.");
   add_time_zone(rep);
   rep.consistency = consistency_checks(rep);
-  if (o.aircraft == AnalyzeOptions::Aircraft::On)
-    rep.warnings.push_back("aircraft search skipped: an edited file has no single clock for its flyovers");
+  add_aircraft_clips(rep, o);
   return rep;
 }
 

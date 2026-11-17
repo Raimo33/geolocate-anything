@@ -137,6 +137,29 @@ above the default threshold). Between the flyovers, the video's rule, is the def
 | Weak or none, with candidates | The best five hum alignments (all grids) as hypotheses, ± 3 s each, two flyovers required | A hum alignment that an aircraft match confirms is right for both; the others fall. |
 | No hum / no candidate | The `--from/--to` window over `--aircraft-bbox`, two flyovers | Place and start time; then the hum is re-searched in the grid of that place, ± 6 h around the aircraft's time, and the rank of the alignment within 3 s of it is reported. With ~43,000 lags instead of years of them, a faint hum that could not stand out globally can confirm the time. |
 
+### Edited files (`search_clips`, `run_aircraft_clips`)
+
+When the hum finds edit points (README "Edit detection"), the file joins clips recorded
+at different times, in an order that may have been rearranged. The aircraft stage then
+works per clip, sharing only the place:
+
+| Step | Choice | Why |
+|---|---|---|
+| Flyovers | A whitened spectrogram and a detection per clip (clips under 60 s skipped) | No template or whitening block straddles a cut; times are the clip's own. |
+| Clocks | One start window per clip and hypothesis: a located clip's hum second ± 3 s (one flyover suffices), else its best three hum alignments ± 3 s, or `--from/--to` (two flyovers) | Clips' clocks are unrelated: nothing assumes contiguity. The silence test runs within a clip, between its own flyovers. |
+| Alone | Each clip's hypotheses searched as an unedited recording, over the hum grid's extent or the given area | Each clip's own candidate places. |
+| Places to try | Each clip's best five answers; for a one-flyover answer also its mirror image across the aircraft's track at closest approach | A single straight pass draws the same curve on either side of its track: in the synthetic test both clips alone chose the wrong side (1.8 and 3.6 km off). |
+| At each place | Every clip searched again within 1 km of it, on its own clock; the place's evidence is the sum of the clips' best scores | The other clips decide between the strips' sides and between flights. |
+| Joint point | Around the best place, a 50 m then 12 m grid (± 200 m, ± 50 m): at each point every matched clip's clock is fitted (± 1.5 s, its matched flights' exact curves, ridge scores) and the scores summed | Alone, a one-flyover clip trades its clock against position along its aircraft's track (100 m ↔ 1 s); the clips' tracks cross at one point. |
+| Verdict | As for one clock, over all clips: every flyover explained (fits), lead of this place's evidence over the best place more than 1 km away. A clip that alone located (moderate or better) more than 1 km away is flagged and caps the verdict at moderate | The camera may have moved, or one answer is wrong. |
+
+The report's `aircraft` keeps one list of flyovers, hypotheses, flights and spectra in
+file time (each tagged with its `clip`; a spectrum's `utc0` is UTC at file time 0 on its
+clip's clock), plus `clips` (per clip: span, start time at the shared place, matched
+aircraft, the hypothesis that gave the time, its own place's distance) and `shared` (the
+place, verdict and reasons). The dashboard's aircraft tab lists each clip's start time
+and aircraft above the flights.
+
 ## 7. Dashboard
 
 When a result involves aircraft, the dashboard's result view gains an **Aircraft** tab
@@ -176,6 +199,8 @@ and `aircraft.spectra` (w × h bytes, base64) in `geoloc locate --json`/`--web-j
 | Case | Result |
 |---|---|
 | Synthetic (unit test): two passes 600 s apart in a 20-minute recording, decoys at the same speeds and times 25 km and 40 s off; ±30 min window, 0.8° × 0.6° box | Listener within 150 m, start within 0.5 s, both flights right; also with the start known to ± 3 s and one flyover. |
+| The same recording edited: its second half first, then its first half (one flyover per clip), each clip's start known to ± 3 s | Alone, each clip picks the mirror side of its pass (1.8 and 3.6 km off, weak, lead 0%); together **21 m** from the listener, clocks within 0.2 s, both flights right, strong (lead 45%). 56 s on 4 threads. |
+| colsto's recording cut up | Not run yet: the recording (YouTube) and the ADS-B bucket were out of this environment's network reach. |
 | colsto's recording, 2026-09-08 ADS-B, Long Island box (1.7° × 0.9°), whole day | **40.87621, −73.52335**: 160 m from DOPPLERGEIST's published reference (40.87693, −73.52498, a public map pin, not surveyed); flights N22NY (PC-12) and N93CQ (King Air 350), the reference's; start 20:17:30 UTC (reference 20:17:29.7); moderate, lead 20%, fits 1.04 / 0.92. 59 s on 12 threads. |
 | Same, continental US (−125..−66, 24..50), whole day, aircraft alone | The reference place is **#3** (score 101.6) behind two wrong flight pairs at 103.6 and 103.0 (Texas Hill Country; western New Jersey), out of 32,000 places scored; verdict weak (lead 1%). Two flyovers and a whole day leave too many look-alike pairs nationwide: 171k flight segments, 181M corridor cells, 1.4M with one clock, 0.86M silent. 2 h 41 min, 2.2 GB peak. |
 | Same recording through `geoloc locate` (hum + aircraft), hum searched over 2026-09-08 | The hum alone is **strong** in US Eastern at 20:17:30 UTC; at that second ± 3 s the aircraft search returns the reference place, **strong**, with the same two aircraft. With an area given (Long Island) 73 s; over the whole US Eastern grid (Florida to Labrador, 9,236 flight segments at that hour) 90 s, 1.6 GB, lead 29%. |
@@ -189,7 +214,8 @@ look-alike pairs; the aircraft then turn the hum's continent into a place.
 - **ADS-B only**: aircraft without ADS-B (or outside ADSB.lol's coverage) cannot be
   matched; the silence test assumes the network saw every low aircraft.
 - **A time window is needed**: a day (two or more flyovers) or a few seconds (one).
-- **Edited files**: one clock per recording; files with edit points are not searched.
+- **Edited files**: one clock per clip, one place for all; a clip with a single flyover
+  needs its own hum second, and the camera is assumed not to have moved between clips.
 - **Clutter**: boats, cars and birds are detected too; they are left unmatched.
 - **Sound speed, wind**: one effective c; wind shifts the apparent speed by its
   component along the track (covered by the ± 12 m/s margin).

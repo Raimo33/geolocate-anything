@@ -446,14 +446,15 @@ const char* air_level_name(AirLevel l) {
   }
 }
 
-std::pair<double, double> event_score(const Spectrogram& spec, const Event& e, const Path& path, const Vec3& o, double start, double c, double sweep) {
+std::pair<double, double> event_score(const Spectrogram& spec, const Event& e, const Path& path, const Vec3& o, double start, double c, double sweep,
+                                      bool ridge) {
   auto rt = ratio_table(path, o, start + e.tc - e.half_window_s - 1, start + e.tc + e.half_window_s + 1, c);
   std::vector<float> ratio;
   int j0 = 0;
   ratios_at(spec, e, rt, start, 1, ratio, j0);
   double best = -INFINITY, bd = 0;
   for (double d = -sweep; d <= sweep + 1e-12; d += 0.0005) {
-    const double v = sum_lines(spec, e, j0, 1, ratio, d);
+    const double v = sum_lines(spec, e, j0, 1, ratio, d, ridge ? Metric::Ridge : Metric::Brightness);
     if (v > best) best = v, bd = d;
   }
   return {best, e.lines.empty() ? 0.0 : e.lines[0].f0 * (1 + bd)};

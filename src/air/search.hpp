@@ -111,8 +111,9 @@ Path path_of(const Track& tr);
 
 // Modelled curve score of one event for a listener at `o` (ECEF) and recording start
 // `start`: sweeps the rest frequency by +-sweep; returns {score, f0 of the strongest line}.
+// `ridge`: scored on ridges (as the search's final pass), else on brightness.
 std::pair<double, double> event_score(const Spectrogram& spec, const Event& e, const Path& path, const Vec3& o, double start, double c,
-                                      double sweep = 0.02);
+                                      double sweep = 0.02, bool ridge = false);
 
 json::object result_json(const SearchResult& r, const std::vector<Event>& events);
 std::string render_result(const SearchResult& r, const std::vector<Event>& events);

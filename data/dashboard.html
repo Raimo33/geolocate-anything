@@ -311,6 +311,11 @@ details.more[open] summary svg { transform: rotate(90deg); }
 .air-sum b { display: block; font-variant-numeric: tabular-nums; }
 .air-sum span { font-size: 12px; color: var(--text-muted); }
 .flights { display: grid; gap: 8px; }
+.clips-air { display: grid; gap: 6px; }
+.clip-air { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 8px 12px; background: var(--surface-2); border-radius: 10px; font-size: 12.5px; }
+.clip-air .k { font-weight: 600; font-variant-numeric: tabular-nums; }
+.clip-air .sub { font-size: 11.5px; color: var(--text-muted); }
+.clip-air .t { text-align: right; font-variant-numeric: tabular-nums; }
 .flight { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; background: var(--surface-2);
   border-radius: 12px; border: 1px solid transparent; cursor: pointer; transition: border-color .15s, transform .15s; }
 .flight:hover, .flight.hot { border-color: var(--fc); transform: translateY(-1px); }
@@ -1372,7 +1377,7 @@ function flightPopup(f, color) {
     ["Heading", f.cpa_track_deg == null ? "–" : `${Math.round(f.cpa_track_deg)}°`],
     ["Tone heard", `${f.f0_hz.toFixed(1)} Hz at rest · fit ${f.fit.toFixed(2)}`],
   ].filter(([, v]) => v);
-  return `<div class="air-pop"><h4 style="color:${color}">${esc(flightTitle(f))}</h4><div class="sub">flyover ${f.event + 1} in the recording</div>
+  return `<div class="air-pop"><h4 style="color:${color}">${esc(flightTitle(f))}</h4><div class="sub">flyover ${f.event + 1} in the recording${f.clip >= 0 ? ` · clip ${f.clip + 1}` : ""}</div>
     <table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
     <div style="margin-top:6px"><a href="https://globe.adsb.lol/?icao=${esc(f.flight)}&showTrace=${esc(day)}" target="_blank" rel="noopener">Track on adsb.lol ↗</a></div></div>`;
 }
@@ -1410,7 +1415,7 @@ function drawAircraft() {
     AIR_MARKS.push({ line, plane, ray });
   });
   const listener = L.marker([best.lat, best.lon], { icon: L.divIcon({ className: "", html: '<div class="listener-ic"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), zIndexOffset: 1000 })
-    .bindTooltip(`<b>Recording made here</b><br>${esc(latlon(best.lat, best.lon))}<br>${esc(best.level)} · starts ${esc(best.start_utc)}`).addTo(airLayer);
+    .bindTooltip(`<b>Recording made here</b><br>${esc(latlon(best.lat, best.lon))}<br>${esc(best.level)} · ${a.clips ? `${a.clips.length} clips, each on its own clock` : `starts ${esc(best.start_utc)}`}`).addTo(airLayer);
   $("legend").insertAdjacentHTML("beforeend", `<div style="margin-top:4px"><span style="background:${css("--critical")}"></span>Recording (aircraft)</div>`
     + a.flights.map((f, i) => `<div><span style="background:${FLIGHT_COLORS[i % FLIGHT_COLORS.length]}"></span>${esc(flightTitle(f))}</div>`).join(""));
   $("legend").classList.remove("hidden");
@@ -1426,22 +1431,30 @@ function hotFlight(i, on) {
 function tabAir() {
   const a = REPORT.aircraft, best = airBest();
   const ev = a.events || [];
-  const notes = [...(a.notes || []), ...a.hypotheses.map((h, i) => `${i === best?.hypothesis ? "★ " : ""}${h.label}: ${h.result ? (h.result.candidates?.length ? `${h.result.level}, ${h.result.reasons?.[0] || ""}` : "no matching place") : h.note || ""}`)];
+  const notes = [...(a.notes || []), ...(a.shared?.reasons || []), ...a.hypotheses.map((h, i) => `${i === best?.hypothesis ? "★ " : ""}${h.label}: ${h.result ? (h.result.candidates?.length ? `${h.result.level}, ${h.result.reasons?.[0] || ""}` : "no matching place") : h.note || ""}`)];
   const head = best ? `<div class="air-sum"><span class="lvl" style="background:var(${AIR_LEVEL[best.level] || "--critical"})">${esc(best.level.toUpperCase())}</span>
-      <div><b>${esc(latlon(best.lat, best.lon))}</b><span>starts ${esc(best.start_utc)} · time from ${esc(best.label || "")}</span></div></div>`
+      <div><b>${esc(latlon(best.lat, best.lon))}</b><span>${a.shared ? `one place for ${a.shared.clips_matched} of ${a.clips.length} clips, each on its own clock${a.shared.disagree ? " · a clip disagrees" : ""}`
+        : `starts ${esc(best.start_utc)} · time from ${esc(best.label || "")}`}</span></div></div>`
     : `<p style="color:var(--text-muted)">${ev.length ? `${ev.length} flyover(s) heard, no aircraft matched${a.notes?.length ? ": " + esc(a.notes[0]) : "."}` : "No aircraft flyover heard."}</p>`;
+  // An edited file: each clip's own clock and aircraft at the shared place.
+  const clips = (a.clips || []).map((c) => `<div class="clip-air">
+      <span class="k">Clip ${c.clip + 1}</span>
+      <div style="min-width:0"><div>${c.start_utc ? `${c.matches.map((m) => esc(m.registration || m.flight.toUpperCase()) + (m.type ? " · " + esc(m.type) : "")).join(" + ")}` : esc(c.note || "not matched")}</div>
+        <div class="sub">${mmss(c.start_s)}–${mmss(c.end_s)} in the file · ${c.events[1] - c.events[0]} flyover(s)${c.time_from ? " · time from " + esc(c.time_from.replace(/^clip \d+: /, "")) : ""}${c.alone_m != null && c.alone_m > 1000 ? ` · alone ${(c.alone_m / 1000).toFixed(1)} km away` : ""}</div></div>
+      <div class="t">${c.start_utc ? `${esc(c.start_utc.slice(0, 10))}<br><b>${esc(c.start_utc.slice(11, 19))}</b> UTC` : "–"}</div></div>`).join("");
   const cards = (a.flights || []).map((f, i) => `<div class="flight" data-f="${i}" style="--fc:${FLIGHT_COLORS[i % FLIGHT_COLORS.length]}">
       <div class="plane">${icon("plane")}</div>
-      <div style="min-width:0"><b>${esc(flightTitle(f))}</b><div class="sub">${esc([f.description, f.owner].filter(Boolean).join(" · ") || "unknown aircraft")}</div></div>
+      <div style="min-width:0"><b>${esc(flightTitle(f))}</b><div class="sub">${esc([f.clip >= 0 ? `clip ${f.clip + 1}` : "", f.description, f.owner].filter(Boolean).join(" · ") || "unknown aircraft")}</div></div>
       <div class="num">${(f.cpa_m / 1000).toFixed(1)} km<br>${f.cpa_alt_m == null ? "" : Math.round(f.cpa_alt_m / 0.3048).toLocaleString("en") + " ft"}</div></div>`).join("");
   const matched = (a.spectra || []).filter((sp) => sp.matched), other = (a.spectra || []).filter((sp) => !sp.matched);
   const block = (sp) => {
     const e = ev[sp.event] || {}, fi = (a.flights || []).findIndex((f) => f.event === sp.event), f = a.flights?.[fi];
-    return `<div class="spec-head"><b>Flyover ${sp.event + 1}${f ? " · " + esc(flightTitle(f)) : ""}</b>
+    return `<div class="spec-head"><b>Flyover ${sp.event + 1}${sp.clip >= 0 ? ` · clip ${sp.clip + 1}` : ""}${f ? " · " + esc(flightTitle(f)) : ""}</b>
       <span>${mmss(e.tc_s ?? 0)} in · ${fx(e.speed_ms, 0)} m/s · ${fx((e.cpa_m ?? 0) / 1000, 1)} km · ${fx(e.f0_hz, 1)} Hz</span></div>
       <div class="spec" data-spec="${sp.event}"><canvas></canvas><svg></svg><div class="tip"></div></div>`;
   };
   return `${head}
+    ${clips ? `<h3>Clips · start times</h3><div class="clips-air">${clips}</div>` : ""}
     ${cards ? `<h3>Aircraft heard</h3><div class="flights">${cards}</div>` : ""}
     ${matched.length ? `<h3>Doppler curves</h3><div class="spec-key"><span><i style="border-color:${FLIGHT_COLORS[0]};border-top-style:dashed"></i>from the track</span><span><i style="border-color:var(--text-muted);border-top-style:dotted"></i>straight fit</span><span style="margin-left:auto">click to hide</span></div>${matched.map(block).join("")}` : ""}
     ${other.length ? `<details class="more" ${matched.length ? "" : "open"}><summary>${icon("chev")}${matched.length ? "Other sounds heard, not matched to an aircraft" : "Flyovers heard"} · ${other.length}</summary>${other.map(block).join("")}</details>` : ""}
@@ -1478,7 +1491,7 @@ function drawSpectra() {
       ${fticks.map((f) => `<text x="4" y="${y(f) + 3}">${f} Hz</text>`).join("")}
       ${tticks.map((t) => `<text x="${x(t)}" y="${H - 4}" text-anchor="middle">${mmss(t)}</text>`).join("")}
       <line class="cross" y1="0" y2="${H}" style="display:none"/>`;
-    const cross = svg.querySelector(".cross"), start = a.start_epoch;
+    const cross = svg.querySelector(".cross"), start = sp.utc0 ?? a.start_epoch;
     box.onmousemove = (ev) => {
       const r = box.getBoundingClientRect(), px = ev.clientX - r.left, py = ev.clientY - r.top;
       const t = sp.t0 + (px / r.width) * (sp.t1 - sp.t0), f = sp.f_hi - (py / r.height) * (sp.f_hi - sp.f_lo);
