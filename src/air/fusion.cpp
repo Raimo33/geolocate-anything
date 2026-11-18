@@ -185,12 +185,17 @@ std::string ensure_days(const Hypothesis& h, double duration_s, const AircraftOp
 }
 
 // The hypothesis' own box, else the run's, else its grid's extent.
+// A forced area clips it (or stands in for it).
 std::optional<Bbox> box_for(const Hypothesis& h, const AircraftOptions& o) {
-  if (h.box) return h.box;
-  if (o.box) return o.box;
-  if (h.grid)
-    if (auto ext = grids::grid_extent(*h.grid, iso_date(i64(h.start_min)))) return Bbox{(*ext)[0], (*ext)[1], (*ext)[2], (*ext)[3]};
-  return std::nullopt;
+  std::optional<Bbox> b = h.box ? h.box : o.box;
+  if (!b && h.grid)
+    if (auto ext = grids::grid_extent(*h.grid, iso_date(i64(h.start_min)))) b = Bbox{(*ext)[0], (*ext)[1], (*ext)[2], (*ext)[3]};
+  if (o.area.empty()) return b;
+  const Bbox a = area_box(o.area);
+  if (!b) return a;
+  Bbox c{std::max(a.west, b->west), std::max(a.south, b->south), std::min(a.east, b->east), std::min(a.north, b->north)};
+  if (c.west >= c.east || c.south >= c.north) return std::nullopt;
+  return c;
 }
 
 // One hypothesis searched over `box`; with a grid, places outside the grid itself go
@@ -209,6 +214,10 @@ SearchResult search_hypothesis(const Spectrogram& spec, const std::vector<Event>
       if (std::any_of(pl.begin(), pl.end(), [&](auto& p) { return p.grid == *h.grid; })) kept.push_back(std::move(c));
     }
     r.candidates = std::move(kept);
+    judge(r);
+  }
+  if (!h.area.empty()) {
+    std::erase_if(r.candidates, [&](const Candidate& c) { return !area_contains(h.area, c.lat, c.lon); });
     judge(r);
   }
   return r;
@@ -362,7 +371,8 @@ AircraftStage run_aircraft(const std::string& path, const std::vector<Hypothesis
   }
   Terrain terrain(o.online);
   int fetched = 0;
-  for (auto& h : hyps) {
+  for (auto h : hyps) {
+    h.area = o.area;
     HypothesisResult hr{h, std::nullopt, ensure_days(h, spec.duration_s, o, fetched)};
     if (!hr.note.empty()) {
       st.tried.push_back(std::move(hr));
@@ -370,7 +380,7 @@ AircraftStage run_aircraft(const std::string& path, const std::vector<Hypothesis
     }
     const auto box = box_for(h, o);
     if (!box) {
-      hr.note = "no search area (give one, or a hum match to take the grid's)";
+      hr.note = o.area.empty() ? "no search area (give one, or a hum match to take the grid's)" : "outside the chosen area";
       st.tried.push_back(std::move(hr));
       continue;
     }
@@ -563,6 +573,7 @@ AircraftStage run_aircraft_clips(const std::string& path, const std::vector<Clip
     in[i].events = detect_events(specs[i]).events;
     for (auto h : spans[i].hyps) {
       if (!h.box) h.box = box_for(h, o);
+      h.area = o.area;
       in[i].hyps.push_back(std::move(h));
     }
     std::cerr << "aircraft: clip " << i + 1 << ": " << in[i].events.size() << " flyover(s)" << std::endl;

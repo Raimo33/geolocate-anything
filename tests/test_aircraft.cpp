@@ -688,3 +688,19 @@ TEST(AircraftBladePass, SameAircraftTonesAgree) {
   EXPECT_FALSE(f0_consistent({113.8}, {130.2}));       // the reference's two aircraft
   EXPECT_TRUE(f0_consistent({}, {130.2}));
 }
+
+// A drawn area: "LON,LAT;..." parsed, its bounding box, and the even-odd rule on a concave loop.
+TEST(Aircraft, AreaPolygon) {
+  const Area a = parse_area("0,0;10,0;10,10;5,4;0,10");  // a "V" notch cut from the top
+  ASSERT_EQ(a.size(), 5u);
+  const Bbox b = area_box(a);
+  EXPECT_DOUBLE_EQ(b.west, 0);
+  EXPECT_DOUBLE_EQ(b.north, 10);
+  EXPECT_TRUE(area_contains(a, 2, 5));    // lat, lon: below the notch
+  EXPECT_FALSE(area_contains(a, 8, 5));   // inside the notch
+  EXPECT_TRUE(area_contains(a, 8, 1));
+  EXPECT_FALSE(area_contains(a, 5, 11));
+  EXPECT_THROW(parse_area("0,0;1,1"), std::invalid_argument);
+  EXPECT_THROW(parse_area("0,0;1,1;2,x"), std::invalid_argument);
+  EXPECT_THROW(parse_area("0,0;1,1;200,2"), std::invalid_argument);
+}

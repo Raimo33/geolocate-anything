@@ -659,6 +659,37 @@ Bbox Bbox::grown(double m) const {
   return {std::max(-180.0, west - dlon), std::max(-90.0, south - dlat), std::min(180.0, east + dlon), std::min(90.0, north + dlat)};
 }
 
+bool area_contains(const Area& a, double lat, double lon) {
+  bool in = false;
+  for (std::size_t i = 0, j = a.size() - 1; i < a.size(); j = i++) {
+    const auto &p = a[i], &q = a[j];
+    if ((p[1] > lat) != (q[1] > lat) && lon < (q[0] - p[0]) * (lat - p[1]) / (q[1] - p[1]) + p[0]) in = !in;
+  }
+  return in;
+}
+
+Bbox area_box(const Area& a) {
+  Bbox b{180, 90, -180, -90};
+  for (auto& [lon, lat] : a) b.west = std::min(b.west, lon), b.east = std::max(b.east, lon), b.south = std::min(b.south, lat), b.north = std::max(b.north, lat);
+  return b;
+}
+
+Area parse_area(const std::string& s) {
+  Area a;
+  for (std::size_t i = 0; i < s.size();) {
+    std::size_t j = s.find(';', i);
+    if (j == std::string::npos) j = s.size();
+    double lon, lat;
+    char tail;
+    if (std::sscanf(s.substr(i, j - i).c_str(), "%lf,%lf%c", &lon, &lat, &tail) != 2 || !(std::abs(lon) <= 180) || !(std::abs(lat) <= 90))
+      throw std::invalid_argument("area must be LON,LAT;LON,LAT;... : " + s.substr(0, 80));
+    a.push_back({lon, lat});
+    i = j + 1;
+  }
+  if (a.size() < 3) throw std::invalid_argument("area needs at least 3 vertices");
+  return a;
+}
+
 TypeDb TypeDb::parse(std::string_view text) {
   TypeDb db;
   auto v = parse_json(text);

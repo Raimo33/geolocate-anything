@@ -99,6 +99,12 @@ struct Bbox {
   Bbox grown(double m) const;
 };
 
+// An area drawn on the map: a closed polygon of (lon, lat) vertices. Answers outside it go.
+using Area = std::vector<std::array<double, 2>>;
+bool area_contains(const Area& a, double lat, double lon);  // even-odd rule
+Bbox area_box(const Area& a);
+Area parse_area(const std::string& s);  // "LON,LAT;LON,LAT;..." (>= 3 vertices), throws otherwise
+
 fs::path adsb_dir();
 fs::path day_path(const std::string& day);  // <cache>/adsb/<YYYY-MM-DD>.trk
 bool has_day(const std::string& day);

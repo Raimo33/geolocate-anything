@@ -4,7 +4,7 @@
 
 | Command | Purpose |
 |---|---|
-| `geoloc locate FILE [--grid G] [--from ISO --to ISO] [--no-split] [--json out]` | Full analysis |
+| `geoloc locate FILE [--grid G] [--from ISO --to ISO] [--nominal 50\|60] [--no-split] [--json out]` | Full analysis (`--nominal`: force the mains frequency) |
 | `geoloc serve` | Web dashboard |
 | `geoloc grids [--at DATE]` | Synchronous grids and their countries |
 | `geoloc refs refresh [--grid G]` | Fetch every month not stored yet (all grids by default) |
@@ -12,7 +12,7 @@
 | `geoloc refs list` | Stored references and sources |
 | `geoloc refs push \| pull [--lazy]` | Sync the store with the bucket (`--lazy`: manifests and each source's newest month; the rest come on first read) |
 | `geoloc refs import-aemo FILE...` | Import AEMO's hand-downloaded yearly workbooks |
-| `geoloc locate FILE [--aircraft auto\|on\|off] [--aircraft-bbox W,S,E,N] [--aircraft-fetch]` | Hum and aircraft together |
+| `geoloc locate FILE [--aircraft auto\|on\|off] [--aircraft-bbox W,S,E,N] [--area LON,LAT;LON,LAT;...] [--aircraft-fetch]` | Hum and aircraft together (`--area`: the aircraft answer must fall inside this polygon) |
 | `geoloc aircraft events FILE [--json out]` | Flyovers in a recording (CPA time, speed, slant distance, rest frequency) |
 | `geoloc aircraft fetch DAY\|FIRST..LAST... [--push [--drop]] [--force] [--parts A B] [--bbox W,S,E,N]` | Store days of ADSB.lol history (non-jets), newest first; `--push` uploads each to the aircraft bucket (skipping days it holds), `--drop` then frees the local copy |
 | `geoloc aircraft push [DAY...]` \| `pull [DAY...]` | Sync ADS-B days with the aircraft bucket (`pull` alone: every day's coverage sidecar) |

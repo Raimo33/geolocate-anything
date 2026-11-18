@@ -31,6 +31,7 @@ struct Hypothesis {
   double start_min = NAN, start_max = NAN;
   int min_events = 2;
   std::optional<Bbox> box;          // explicit area (else the grid's extent)
+  Area area;                        // forced area: candidates outside it go
 };
 
 struct HypothesisResult {
@@ -41,6 +42,7 @@ struct HypothesisResult {
 
 struct AircraftOptions {
   std::optional<Bbox> box;  // area for hypotheses without a grid
+  Area area;                // forced area: every search stays inside it
   bool fetch = false;       // download missing ADS-B days (~4 GB each)
   bool online = true;       // DEM tiles
   int max_days = 3;         // at most this many days fetched per run

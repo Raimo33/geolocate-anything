@@ -637,7 +637,24 @@ asio::awaitable<Response> handle_locate(App& app, beast::tcp_stream& stream, bea
     double b[4];
     char tail;
     if (std::sscanf(it->second.c_str(), "%lf,%lf,%lf,%lf%c", &b[0], &b[1], &b[2], &b[3], &tail) == 4)
-      argv.insert(argv.end(), {"--aircraft-bbox", it->second});
+      argv.push_back("--aircraft-bbox=" + it->second);  // one token: a negative WEST must not read as a flag
+  }
+  // Grids to search (comma-separated ids) and a forced area (LON,LAT;LON,LAT;...), from the lasso.
+  if (auto it = fields.find("grids"); it != fields.end())
+    for (std::size_t i = 0; i < it->second.size();) {
+      std::size_t j = std::min(it->second.find(',', i), it->second.size());
+      std::string id = it->second.substr(i, j - i);
+      if (!id.empty() && id.size() <= 64 && std::all_of(id.begin(), id.end(), [](char c) { return std::islower(c) || std::isdigit(c) || c == '_'; }))
+        argv.insert(argv.end(), {"--grid", id});
+      i = j + 1;
+    }
+  if (auto it = fields.find("area"); it != fields.end() && !it->second.empty()) {
+    try {
+      air::parse_area(it->second);
+    } catch (const std::invalid_argument& e) {
+      co_return json_resp(req, http::status::bad_request, error_obj(e.what()));
+    }
+    argv.push_back("--area=" + it->second);
   }
   co_return start_job(app, req, std::move(argv), std::move(*up.file));
 }

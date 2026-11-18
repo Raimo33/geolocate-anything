@@ -73,6 +73,10 @@ Open <http://127.0.0.1:8000>, click **Fetch the latest data** to download the gr
 reference data from the public sources (kept in the `geoloc-data` volume), then upload a
 recording. Buckets and tokens are optional.
 
+What you already know can narrow the search before you upload: a date range (drag the
+slider or type the dates), the mains frequency (50 or 60 Hz), and an area drawn on the map
+with a lasso (only the grids inside it are searched, and an aircraft answer must fall inside it).
+
 For the command-line interface, environment variables and building from source, see
 [`docs/usage.md`](docs/usage.md).
 

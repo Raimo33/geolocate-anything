@@ -98,6 +98,7 @@ nav a .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--seri
 .opts { margin-top: 12px; font-size: 11.5px; color: var(--text-muted); }
 .opts .rng-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .opts .rng-head b { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.opts .day { font: inherit; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; background: none; border: 0; padding: 0; width: 7.6em; color-scheme: light dark; }
 .rng { position: relative; height: 22px; }
 .rng .track, .rng .fill { position: absolute; top: 9px; height: 4px; border-radius: 2px; }
 .rng .track { left: 0; right: 0; background: var(--border); }
@@ -306,6 +307,16 @@ details.more[open] summary svg { transform: rotate(90deg); }
 .opts .air { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .opts .air b { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .opts .air .btn { padding: 3px 10px; font-size: 11.5px; }
+.opts .air > span:first-child { width: 34px; flex: none; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.seg button { font: inherit; font-size: 11.5px; padding: 3px 10px; border: 0; background: var(--surface-1); color: var(--text-primary); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--text-primary); color: var(--surface-1); }
+body.lasso #map { cursor: crosshair; touch-action: none; }
+body.lasso #v-upload { opacity: .35; pointer-events: none; }
+body.lasso header { pointer-events: none; }
+.lasso-hint { position: fixed; top: 74px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 7px 14px; border-radius: 999px;
+  background: var(--text-primary); color: var(--surface-1); font-size: 12.5px; pointer-events: none; }
 .air-sum { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--surface-2); border-radius: 12px; }
 .air-sum .lvl { font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 3px 7px; border-radius: 6px; color: #fff; flex: none; }
 .air-sum b { display: block; font-variant-numeric: tabular-nums; }
@@ -378,14 +389,17 @@ details.more[open] summary svg { transform: rotate(90deg); }
     <strong>Drop a recording</strong>
   </label>
   <div class="opts" id="opts">
-    <div class="rng-head"><span>Dates (UTC)</span><span><b id="from-txt">–</b> → <b id="to-txt">–</b></span></div>
+    <div class="rng-head"><span>Dates (UTC)</span><span><input type="date" class="day" id="from" aria-label="From date (UTC)"> → <input type="date" class="day" id="to" aria-label="To date (UTC)"></span></div>
     <div class="rng"><div class="track"></div><div class="fill" id="rng-fill"></div>
       <input type="range" id="r-from" min="0" max="0" value="0" step="1" aria-label="From date (UTC)" disabled>
       <input type="range" id="r-to" min="0" max="0" value="0" step="1" aria-label="To date (UTC)" disabled></div>
-    <input type="hidden" id="from"><input type="hidden" id="to">
-    <div class="air" title="Where to look for the aircraft heard in the recording when the hum gives no grid: the map's current view">
-      <span>Aircraft area</span><b id="air-area">from the hum</b>
-      <button class="btn" id="air-use" type="button">Use map view</button><button class="btn hidden" id="air-clear" type="button">×</button>
+    <div class="air" title="Mains frequency: auto-detected, or forced when the hum is faint or a louder tone misleads">
+      <span>Mains</span><div class="seg" id="hz" role="group" aria-label="Mains frequency">
+        <button type="button" data-hz="" class="on">Auto</button><button type="button" data-hz="50">50 Hz</button><button type="button" data-hz="60">60 Hz</button></div>
+    </div>
+    <div class="air" title="Draw a loop on the map around where the recording could have been made: only the grids inside it are searched, and the aircraft answer must fall inside it">
+      <span>Area</span><b id="air-area">anywhere</b>
+      <button class="btn" id="air-use" type="button">Draw on map</button><button class="btn hidden" id="air-clear" type="button" aria-label="Clear area">×</button>
     </div>
   </div>
   <div class="err-box hidden" id="upload-err"></div>
@@ -496,6 +510,7 @@ function clearMarks() {
   if (airLayer) { airLayer.remove(); airLayer = null; }
   if (adsbLayer) { adsbLayer.remove(); adsbLayer = null; }
   if (tzLayer) { tzLayer.remove(); tzLayer = null; }
+  if (areaLayer) { areaLayer.remove(); areaLayer = null; }
 }
 const areasReady = fetch("api/grid-areas").then((r) => r.json()).then((g) => { AREAS = g.features; }).catch(() => { AREAS = []; });
 const fid = (f) => f.properties.grid || f.properties.id;
@@ -566,10 +581,16 @@ addEventListener("hashchange", route);
 
 function showIdle() {
   clearMarks();
-  const have = new Set(GRIDS.filter((g) => g.refs_from).map((g) => g.id));
+  drawIdle();
+  if (!AREA) map.flyTo([30, 10], innerWidth > 800 ? 2.5 : 1.5, { duration: 0.8 });
+}
+// The grids an analysis would search: stored data, the forced frequency, inside the drawn area.
+const searchable = () => GRIDS.filter((g) => g.refs_from && (!HZ || g.nominal_hz === +HZ) && (!AREA_GRIDS || AREA_GRIDS.has(g.id))).map((g) => g.id);
+function drawIdle() {
+  const have = new Set(searchable());
   drawRegions((id) => (have.has(id) ? "win" : "other"));
-  legend([[css("--series-1"), "Searchable grids"], [css("--region-other"), "Separate grid, no reference data"]]);
-  map.flyTo([30, 10], innerWidth > 800 ? 2.5 : 1.5, { duration: 0.8 });
+  legend([[css("--series-1"), HZ || AREA ? "Grids to search" : "Searchable grids"], [css("--region-other"), HZ || AREA ? "Left out, or no reference data" : "Separate grid, no reference data"]]);
+  if (AREA) showArea();
 }
 // Data page map: every grid's area coloured by how much history is stored for it.
 function showCoverage(fly = true) {
@@ -880,10 +901,16 @@ function syncRange(moved) {
   const a = $("r-from"), b = $("r-to"), lo = +a.dataset.lo, n = +a.max || 1;
   if (+a.value > +b.value) (moved === a ? b : a).value = moved.value;
   $("from").value = dayStr((lo + +a.value) * DAY_MS); $("to").value = dayStr((lo + +b.value) * DAY_MS);
-  $("from-txt").textContent = $("from").value; $("to-txt").textContent = $("to").value;
   $("rng-fill").style.cssText = `left:${a.value / n * 100}%;right:${100 - b.value / n * 100}%`;
 }
 for (const id of ["r-from", "r-to"]) $(id).addEventListener("input", (ev) => syncRange(ev.target));
+// A typed date moves its handle (clamped to the stored range); a cleared one resets it.
+for (const [id, r] of [["from", "r-from"], ["to", "r-to"]])
+  $(id).addEventListener("change", (ev) => {
+    const s = $(r), d = ev.target.value;
+    s.value = d ? Math.max(0, Math.min(+s.max, dayNum(d) - +$("r-from").dataset.lo)) : id === "from" ? 0 : s.max;
+    syncRange(s);
+  });
 function fillRange() {
   const a = GRIDS.map((g) => ts(g.refs_from)).filter(Boolean), b = GRIDS.map((g) => ts(g.refs_to)).filter(Boolean);
   if (!a.length) return;
@@ -983,7 +1010,12 @@ async function upload(file) {
   // Only narrow when the user moved a bound off the full stored range.
   if ($("from").value && $("from").value !== $("from").min) fd.append("from", $("from").value + "T00:00:00Z");
   if ($("to").value && $("to").value !== $("to").max) fd.append("to", $("to").value + "T23:59:59Z");
-  if (AIR_AREA) fd.append("aircraft_bbox", AIR_AREA.join(","));
+  if (HZ) fd.append("nominal", HZ);
+  if (AREA) {
+    fd.append("area", AREA.map((p) => p.join(",")).join(";"));
+    const ids = searchable();
+    if (ids.length) fd.append("grids", ids.join(","));
+  }
   $("upload-err").classList.add("hidden");
   BUSY = new AbortController();
   $("busy-name").textContent = file.name;
@@ -1337,18 +1369,98 @@ function drawTimeZone() {
 }
 
 // ---------------------------------------------------------------- aircraft
-// Search area for the aircraft when the hum gives no grid: the map's view when chosen.
-let AIR_AREA = null;
-function showAirArea() {
-  $("air-area").textContent = AIR_AREA ? AIR_AREA.map((x) => x.toFixed(2)).join(", ") : "from the hum";
-  $("air-clear").classList.toggle("hidden", !AIR_AREA);
-}
-$("air-use").addEventListener("click", () => {
-  const b = map.getBounds();
-  AIR_AREA = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((x, i) => Math.max(i % 2 ? -90 : -180, Math.min(i % 2 ? 90 : 180, x)));
+// Forced mains frequency ("" = auto) and area: a loop drawn on the map, [[lon, lat], ...].
+// The area keeps the grids it touches (AREA_GRIDS) and bounds the aircraft answer.
+let HZ = "", AREA = null, AREA_GRIDS = null, areaLayer = null;
+const idleShown = () => !$("v-upload").classList.contains("hidden");
+$("hz").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  HZ = b.dataset.hz;
+  for (const x of $("hz").children) x.classList.toggle("on", x === b);
   showAirArea();
 });
-$("air-clear").addEventListener("click", () => { AIR_AREA = null; showAirArea(); });
+// Even-odd point-in-ring over [lon, lat] vertices.
+function inRing(r, lon, lat) {
+  let inside = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++)
+    if ((r[i][1] > lat) !== (r[j][1] > lat) && lon < (r[j][0] - r[i][0]) * (lat - r[i][1]) / (r[j][1] - r[i][1]) + r[i][0]) inside = !inside;
+  return inside;
+}
+// Grids whose area (any date) touches the loop: a vertex of one inside the other (the loop is drawn densely).
+function gridsIn(loop) {
+  const out = new Set();
+  for (const f of AREAS || []) {
+    const id = fid(f), g = f.geometry;
+    if (!g || out.has(id)) continue;
+    const polys = g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : [];
+    const hit = polys.some((rings) => {
+      const inPoly = (lon, lat) => rings.reduce((n, r) => n + inRing(r, lon, lat), 0) % 2 === 1;  // holes cancel
+      return loop.some(([lon, lat]) => inPoly(lon, lat)) || rings[0].some(([lon, lat]) => inRing(loop, lon, lat));
+    });
+    if (hit) out.add(id);
+  }
+  return out;
+}
+function showArea() {
+  if (areaLayer) areaLayer.remove();
+  areaLayer = L.polygon(AREA.map(([lon, lat]) => [lat, lon]), { color: css("--text-primary"), weight: 2, dashArray: "6 4", fill: false, interactive: false }).addTo(map);
+}
+function showAirArea() {
+  const ids = searchable();
+  $("air-area").textContent = !AREA ? "anywhere"
+    : ids.length ? ids.map(gridName).join(", ") : HZ && AREA_GRIDS.size ? `no ${HZ} Hz grid with data inside: the hum searches all` : "no grid with data inside: the hum searches all";
+  $("air-area").title = $("air-area").textContent;
+  $("air-clear").classList.toggle("hidden", !AREA);
+  if (idleShown()) drawIdle();
+}
+let lasso = null;
+function endLasso(cancel) {
+  if (!lasso) return;
+  const { pts, line } = lasso;
+  lasso = null;
+  line.remove();
+  document.body.classList.remove("lasso");
+  $("lasso-hint")?.remove();
+  map.dragging.enable();
+  if (cancel || pts.length < 3) return;
+  // Thin the freehand loop (<= 150 vertices: the server keeps 4 KB per field), shifted into
+  // [-180, 180] when drawn on a world copy.
+  const px = pts.map((p) => map.latLngToLayerPoint(p));
+  let tol = 2, thinPx = L.LineUtil.simplify(px, tol);
+  while (thinPx.length > 150) thinPx = L.LineUtil.simplify(px, (tol *= 1.5));
+  const thin = thinPx.map((p) => map.layerPointToLatLng(p));
+  const shift = Math.round(thin.reduce((a, p) => a + p.lng, 0) / thin.length / 360) * 360;
+  const loop = thin.map((p) => [Math.max(-180, Math.min(180, p.lng - shift)), Math.max(-90, Math.min(90, p.lat))]);
+  if (loop.length < 3) return;
+  AREA = loop.map(([a, b]) => [+a.toFixed(4), +b.toFixed(4)]);
+  AREA_GRIDS = gridsIn(AREA);
+  showAirArea();
+}
+$("air-use").addEventListener("click", () => {
+  if (lasso) return;
+  lasso = { pts: [], line: L.polyline([], { color: css("--text-primary"), weight: 2, dashArray: "6 4", interactive: false }).addTo(map) };
+  map.dragging.disable();
+  document.body.classList.add("lasso");
+  document.body.insertAdjacentHTML("beforeend", `<div class="lasso-hint" id="lasso-hint">Drag a loop around the area · Esc cancels</div>`);
+});
+const mapEl = map.getContainer();
+mapEl.addEventListener("pointerdown", (ev) => {
+  if (!lasso) return;
+  ev.preventDefault();
+  mapEl.setPointerCapture(ev.pointerId);
+  lasso.down = true;
+  lasso.pts = [map.mouseEventToLatLng(ev)];
+});
+mapEl.addEventListener("pointermove", (ev) => {
+  if (!lasso?.down) return;
+  lasso.pts.push(map.mouseEventToLatLng(ev));
+  lasso.line.setLatLngs(lasso.pts);
+});
+mapEl.addEventListener("pointerup", () => lasso?.down && endLasso(false));
+mapEl.addEventListener("pointercancel", () => endLasso(true));
+addEventListener("keydown", (ev) => ev.key === "Escape" && endLasso(true));
+$("air-clear").addEventListener("click", () => { AREA = AREA_GRIDS = null; if (areaLayer) { areaLayer.remove(); areaLayer = null; } showAirArea(); });
 
 const FLIGHT_COLORS = ["#f2711c", "#a23bd0", "#13a89e", "#e03e8c", "#7a8b00"];
 const latlon = (a, b) => `${Math.abs(a).toFixed(4)}° ${a >= 0 ? "N" : "S"}, ${Math.abs(b).toFixed(4)}° ${b >= 0 ? "E" : "W"}`;

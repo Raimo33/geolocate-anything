@@ -390,6 +390,7 @@ static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
   }
   air::AircraftOptions ao;
   if (o.aircraft_box) ao.box = air::Bbox{(*o.aircraft_box)[0], (*o.aircraft_box)[1], (*o.aircraft_box)[2], (*o.aircraft_box)[3]};
+  ao.area = o.area;
   ao.fetch = fetch;
   if (!o.aircraft_fetch && fetch) ao.max_days = std::max(1, std::atoi(env("GEOLOC_AIRPLANE_MAX_FETCH", "1").c_str()));
   rep.aircraft = air::run_aircraft(rep.path, hyps, ao);
@@ -455,6 +456,7 @@ static void add_aircraft_clips(Report& rep, const AnalyzeOptions& o) {
   }
   air::AircraftOptions ao;
   if (o.aircraft_box) ao.box = air::Bbox{(*o.aircraft_box)[0], (*o.aircraft_box)[1], (*o.aircraft_box)[2], (*o.aircraft_box)[3]};
+  ao.area = o.area;
   ao.fetch = fetch;
   if (!o.aircraft_fetch && fetch) ao.max_days = std::max(1, std::atoi(env("GEOLOC_AIRPLANE_MAX_FETCH", "1").c_str()));
   rep.aircraft = air::run_aircraft_clips(rep.path, clips, ao);

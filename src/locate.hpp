@@ -71,6 +71,7 @@ struct AnalyzeOptions {
   // Aircraft: auto runs when ADS-B history is stored (`geoloc aircraft fetch`).
   enum class Aircraft { Auto, On, Off } aircraft = Aircraft::Auto;
   std::optional<std::array<double, 4>> aircraft_box;  // west, south, east, north
+  std::vector<std::array<double, 2>> area;             // forced (lon, lat) polygon for the aircraft answer
   bool aircraft_fetch = false;                         // download missing ADS-B days
 };
 

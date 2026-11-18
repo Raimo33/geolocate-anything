@@ -9,6 +9,7 @@
 #include <set>
 #include <iostream>
 
+#include "air/adsb.hpp"
 #include "air/commands.hpp"
 #include "enf/extract.hpp"
 #include "grids.hpp"
@@ -325,11 +326,12 @@ int main(int argc, char** argv) {
   loc->add_option("--nominal", loc_nominal, "force 50 or 60 Hz")->check(CLI::IsMember({50, 60}));
   loc->add_flag("--no-split", no_split, "treat the file as one recording: don't look for edit points");
   loc->add_option("--json", loc_json, "write a JSON report here");
-  std::string air_mode = "auto", air_bbox;
+  std::string air_mode = "auto", air_bbox, loc_area;
   bool air_fetch = false;
   loc->add_option("--aircraft", air_mode, "aircraft flyovers vs. ADS-B history: auto (when history is stored), on, off")
       ->check(CLI::IsMember({"auto", "on", "off"}));
   loc->add_option("--aircraft-bbox", air_bbox, "area for the aircraft search without a hum match: WEST,SOUTH,EAST,NORTH");
+  loc->add_option("--area", loc_area, "force the aircraft answer inside this polygon: LON,LAT;LON,LAT;...");
   loc->add_flag("--aircraft-fetch", air_fetch, "download missing ADS-B days (~4 GB each)");
   loc->add_flag("--web-json", web_json, "print the dashboard's JSON on stdout (used by `serve`)")->group("");
   loc->add_option("--display-name", loc_display)->group("");
@@ -350,6 +352,7 @@ int main(int argc, char** argv) {
         throw std::invalid_argument("--aircraft-bbox must be WEST,SOUTH,EAST,NORTH");
       o.aircraft_box = b;
     }
+    if (!loc_area.empty()) o.area = air::parse_area(loc_area);
     rc = cmd_locate(loc_file, o, loc_json, web_json, loc_display, loc_size);
   });
 

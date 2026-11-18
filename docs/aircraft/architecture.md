@@ -273,8 +273,11 @@ aircraft tab lists those regions like the grids' Gantt: one lane per region, one
 segment per stored day coloured against the region's busiest day; hovering a region
 outlines and frames its box on the map.
 
-Upload option **Aircraft area → Use map view** passes the visible map as the search
-area for recordings without a hum match. The report carries this as `aircraft.flights`
+Upload option **Area → Draw on map** is a lasso: the loop drawn on the map goes up as
+`--area` (the aircraft search stays within its bounding box, clipped to a grid's extent
+when the hum gives one, and answers outside the polygon are dropped) and the grids it
+touches as `--grid`, so the hum is searched only there. **Mains** forces 50 or 60 Hz
+(`--nominal`), which also narrows those grids. The report carries this as `aircraft.flights`
 and `aircraft.spectra` (w × h bytes, base64) in `geoloc locate --json`/`--web-json`.
 
 ## 8. Results
