@@ -9,6 +9,8 @@
 #include <fstream>
 #include <numbers>
 #include <random>
+#include <thread>
+#include <chrono>
 
 #include "air/adsb.hpp"
 #include "air/doppler.hpp"
@@ -259,6 +261,49 @@ TEST(AircraftStore, EncodeDecodeRoundTrip) {
   EXPECT_LT(worst_p, 25.0);
   EXPECT_LT(ev[ev.size() / 2], 0.7);
   EXPECT_LT(worst_v, 8.0);  // at the turn's instant roll-in and roll-out (no aircraft does that)
+}
+
+// A bounded store (GEOLOC_AIRPLANE_KEEP_DAYS) never evicts a day a search in progress
+// reads. Regression: a whole-day window needs three days; with KEEP_DAYS=2, pulling the
+// third evicted the window's own day (used last by the previous analysis), and the search
+// saw only the tracks after midnight.
+TEST(AircraftStore, BoundedStoreKeepsTheDaysASearchReads) {
+  const auto dir = test::make_temp_dir("adsb-pin");
+  test::use_cache(dir);
+  const char* bucket_env = std::getenv("GEOLOC_AIRPLANE_BUCKET");  // no pulls: local days only
+  const std::string bucket = bucket_env ? bucket_env : "";
+  ::unsetenv("GEOLOC_AIRPLANE_BUCKET");
+  ::setenv("GEOLOC_AIRPLANE_KEEP_DAYS", "2", 1);
+  fs::create_directories(adsb_dir());
+  auto stub = [](const std::string& day) {  // has_day() reads only the store's magic
+    std::ofstream(day_path(day), std::ios::binary) << "GLADSB03";
+    mark_used(day);
+  };
+  auto stored = [](const std::string& day) { return fs::exists(day_path(day)); };
+  stub("2024-04-07");  // the window's day, used last by an earlier analysis
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  {
+    DayPinScope pins;
+    EXPECT_TRUE(ensure_day("2024-04-07"));
+    EXPECT_FALSE(ensure_day("2024-04-06"));  // pinned, then "pulled" (no bucket here):
+    stub("2024-04-06");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_FALSE(ensure_day("2024-04-08"));
+    stub("2024-04-08");
+    evict_days();  // three stored, two allowed: all three pinned, all three stay
+    EXPECT_TRUE(stored("2024-04-07"));
+    EXPECT_TRUE(stored("2024-04-06"));
+    EXPECT_TRUE(stored("2024-04-08"));
+  }
+  // Unpinned again: the bound holds, keeping the days used last.
+  evict_days();
+  EXPECT_FALSE(stored("2024-04-07"));
+  EXPECT_TRUE(stored("2024-04-06"));
+  EXPECT_TRUE(stored("2024-04-08"));
+  ::unsetenv("GEOLOC_AIRPLANE_KEEP_DAYS");
+  if (!bucket.empty()) ::setenv("GEOLOC_AIRPLANE_BUCKET", bucket.c_str(), 1);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
 }
 
 TEST(AircraftStore, IngestsADayFromLocalTarParts) {

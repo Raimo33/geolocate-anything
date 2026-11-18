@@ -341,6 +341,7 @@ void log_line(const std::string& m) { std::cerr << "  " << m << std::endl; }
 }  // namespace
 
 AircraftStage run_aircraft(const std::string& path, const std::vector<Hypothesis>& hyps, const AircraftOptions& o) {
+  DayPinScope pins;  // the days the hypotheses read stay stored until the search ends
   AircraftStage st;
   std::cerr << "aircraft: decoding at 4 kHz" << std::endl;
   auto au = audio::load_audio(path, SPEC_RATE);
@@ -543,6 +544,7 @@ JointClips search_clips(const std::vector<ClipInput>& clips, const SpanTrackSour
 }
 
 AircraftStage run_aircraft_clips(const std::string& path, const std::vector<ClipSpan>& spans, const AircraftOptions& o) {
+  DayPinScope pins;  // the days the clips' hypotheses read stay stored until the search ends
   std::cerr << "aircraft: decoding at 4 kHz" << std::endl;
   auto au = audio::load_audio(path, SPEC_RATE);
   // Each clip its own spectrogram (whitening and detection never straddle a cut).

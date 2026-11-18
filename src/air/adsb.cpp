@@ -1224,6 +1224,29 @@ std::string coverage_json() {
 
 void mark_used(const std::string& day) { atomic_write(adsb_dir() / (day + ".used"), ""); }
 
+namespace {
+std::mutex pin_mu;
+std::multiset<std::string> pinned_days;  // over every live DayPinScope, all threads
+thread_local DayPinScope* pin_scope = nullptr;
+}  // namespace
+
+DayPinScope::DayPinScope() : prev_(pin_scope) { pin_scope = this; }
+
+DayPinScope::~DayPinScope() {
+  pin_scope = prev_;
+  std::lock_guard lk(pin_mu);
+  for (auto& d : days_) pinned_days.erase(pinned_days.find(d));
+}
+
+void DayPinScope::pin(const std::string& day) {
+  if (std::find(days_.begin(), days_.end(), day) != days_.end()) return;
+  days_.push_back(day);
+  std::lock_guard lk(pin_mu);
+  pinned_days.insert(day);
+}
+
+// Keeps the pinned days and, of the rest, the ones used last: GEOLOC_AIRPLANE_KEEP_DAYS in
+// all, more only while pinned days alone exceed it.
 void evict_days() {
   const int keep = std::atoi(env("GEOLOC_AIRPLANE_KEEP_DAYS").c_str());
   if (keep <= 0) return;
@@ -1232,13 +1255,27 @@ void evict_days() {
     auto t = fs::last_write_time(adsb_dir() / (d + ".used"), ec);
     return ec ? fs::last_write_time(day_path(d), ec) : t;
   };
+  std::set<std::string> pins;
+  {
+    std::lock_guard lk(pin_mu);
+    pins.insert(pinned_days.begin(), pinned_days.end());
+  }
   auto days = stored_days();
   std::sort(days.begin(), days.end(), [&](auto& a, auto& b) { return used(a) > used(b); });
-  for (std::size_t i = std::size_t(keep); i < days.size(); ++i)
-    for (const char* ext : {".trk", ".idx", ".used"}) fs::remove(adsb_dir() / (days[i] + ext));
+  const auto n_pinned = std::size_t(std::count_if(days.begin(), days.end(), [&](auto& d) { return pins.contains(d); }));
+  std::size_t room = std::size_t(keep) > n_pinned ? std::size_t(keep) - n_pinned : 0;
+  for (auto& d : days) {
+    if (pins.contains(d)) continue;
+    if (room > 0) {
+      --room;
+      continue;
+    }
+    for (const char* ext : {".trk", ".idx", ".used"}) fs::remove(adsb_dir() / (d + ext));
+  }
 }
 
 bool ensure_day(const std::string& day) {
+  if (pin_scope) pin_scope->pin(day);
   if (has_day(day)) return true;
   if (!bucket::enabled()) return false;
   try {

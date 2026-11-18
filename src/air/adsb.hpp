@@ -119,9 +119,28 @@ void ensure_coverage(const std::string& day);    // writes the sidecar if missin
 // A bounded store (a server's volume): GEOLOC_AIRPLANE_KEEP_DAYS > 0 keeps only that many
 // days' stores, the ones used last (sidecars stay).
 void mark_used(const std::string& day);
-void evict_days();
-// The day is stored here, or was just downloaded from the ADS-B bucket.
+void evict_days();  // never a day pinned by a live DayPinScope (any thread)
+// The day is stored here, or was just downloaded from the ADS-B bucket. Inside a
+// DayPinScope the day is pinned first.
 bool ensure_day(const std::string& day);
+
+// While one lives on this thread, every day ensure_day() is asked for stays stored until
+// it ends: a search must not evict a day it reads. A whole-day window needs three days
+// (the window's, and its neighbours for the padding), more than a small
+// GEOLOC_AIRPLANE_KEEP_DAYS, and evicting by last use dropped the window's own day,
+// leaving only the tracks after midnight.
+class DayPinScope {
+ public:
+  DayPinScope();
+  ~DayPinScope();
+  DayPinScope(const DayPinScope&) = delete;
+  DayPinScope& operator=(const DayPinScope&) = delete;
+  void pin(const std::string& day);
+
+ private:
+  DayPinScope* prev_;
+  std::vector<std::string> days_;
+};
 
 struct IngestOptions {
   std::vector<std::string> parts;  // local tar parts in order; empty = download the release

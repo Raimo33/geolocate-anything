@@ -145,6 +145,7 @@ void register_commands(CLI::App& app, int& rc) {
     so.silence = !lo_no_silence, so.silence_whole = lo_silence_whole, so.unknown_types = !lo_known_types;
     so.type_prior = !lo_no_prior;
     const double t0 = so.start_min - 600, t1 = so.start_max + au.duration() + 600;
+    DayPinScope pins;  // the window's days stay stored until the search ends
     bool any_day = false;
     for (i64 d = floor_div(i64(t0), 86400) - 1; d <= floor_div(i64(t1), 86400); ++d) any_day |= ensure_day(iso_date(d * 86400));
     if (!any_day) std::printf("no ADS-B history stored for this window: run `geoloc aircraft fetch DAY`\n");
