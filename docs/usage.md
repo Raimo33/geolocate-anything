@@ -50,7 +50,8 @@ fetches whichever of the last 7 UTC days are missing from ADSB.lol and uploads t
 dashboard) download an ADSB.lol day the bucket lacks (~4 GB streamed, ~50 MB kept, then
 uploaded to the bucket; at most `GEOLOC_AIRPLANE_MAX_FETCH` days per analysis, default 1), and
 `GEOLOC_AIRPLANE_KEEP_DAYS` keeps only that many days' stores, the ones used last (for a
-bounded volume); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
+bounded volume; never a day an analysis in progress reads, so a whole-day window's three
+days stay even with a bound of 2); `GEOLOC_THREADS` sets how many of their chunks decode at once (default: the
 cores, 4 to 8), and how many threads `locate` uses (default: every core): a search
 spreads its blocks over them (~30 MB each), long compressed audio is decoded and
 resampled in 30 s chunks on them (the same samples as one pass), and the faint-hum
