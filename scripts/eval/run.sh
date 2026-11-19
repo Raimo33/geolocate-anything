@@ -27,7 +27,7 @@ mode=$1; shift
 for id in "$@"; do
   f=$(ls "$EVAL_AUDIO/$id".* 2>/dev/null | grep -v -E '\.json$|\.part$' | head -1)
   [ -z "$f" ] && { echo "$id: no audio in $EVAL_AUDIO"; continue; }
-  rel=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['release_timestamp'])" "$EVAL_AUDIO/$id.info.json")
+  rel=$(python3 -c "import json,sys;print(int(json.load(open(sys.argv[1]))['release_timestamp']))" "$EVAL_AUDIO/$id.info.json")
   args=()
   case $mode in
     dated|forced50|forced60)

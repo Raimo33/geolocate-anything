@@ -151,7 +151,7 @@ void register_commands(CLI::App& app, int& rc) {
     if (!any_day) std::printf("no ADS-B history stored for this window: run `geoloc aircraft fetch DAY`\n");
     Terrain terrain(!lo_offline);
     auto res = search_regions(
-        spec, events, [&](const Bbox& b) { return split_tracks(load_tracks(t0, t1, b)); }, terrain, so, lo_region,
+        spec, events, [](const Bbox& b, double a, double z) { return split_tracks(load_tracks(a, z, b)); }, terrain, so, lo_region,
         [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); });
     std::printf("%s", render_result(res, events).c_str());
     if (!lo_json.empty()) {

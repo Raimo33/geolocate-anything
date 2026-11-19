@@ -204,8 +204,7 @@ SearchResult search_hypothesis(const Spectrogram& spec, const std::vector<Event>
                                Terrain& terrain, bool grid_filter, const std::function<void(const std::string&)>& progress) {
   SearchOptions so;
   so.start_min = h.start_min, so.start_max = h.start_max, so.box = box, so.min_events = h.min_events;
-  const double t0 = h.start_min - 600, t1 = h.start_max + spec.duration_s + 600;
-  auto r = search_regions(spec, events, [&](const Bbox& b) { return tracks(b, t0, t1); }, terrain, so, 3.0, progress);
+  auto r = search_regions(spec, events, tracks, terrain, so, 3.0, progress);
   if (grid_filter && h.grid) {
     const std::string day = iso_date(i64(h.start_min));
     std::vector<Candidate> kept;
@@ -543,6 +542,7 @@ JointClips search_clips(const std::vector<ClipInput>& clips, const SpanTrackSour
   else if (flyovers >= 1 && min_fit >= 0.5 && lead >= 0.1) sp.level = AirLevel::Moderate;
   else sp.level = flyovers ? AirLevel::Weak : AirLevel::None;
   if (sp.disagree && sp.level > AirLevel::Moderate) sp.level = AirLevel::Moderate;
+  if (flyovers < 2 && min_fit < SINGLE_FLYOVER_MODERATE_FIT && sp.level == AirLevel::Moderate) sp.level = AirLevel::Weak;
   char b[300];
   std::snprintf(b, sizeof b,
                 "%d of %zu clips heard from this place, each on its own clock (%d flyover(s), weakest fit %.2f); lead over the best place elsewhere %.0f%%; "

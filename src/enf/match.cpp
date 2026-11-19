@@ -1441,7 +1441,10 @@ Verdict judge(const std::vector<GridResult>& results, double duration_s) {
     if (g.best()) scored.push_back(&g);
   Verdict v;
   if (scored.empty()) {
-    v.reasons = {"no reference data overlapped the search window"};
+    // Grids scored with no consistent best are a different case from no overlap at all.
+    const bool searched = std::any_of(results.begin(), results.end(), [](auto& g) { return !g.candidates.empty(); });
+    v.reasons = {searched ? "no grid matched consistently at any time in the search window"
+                          : "no reference data overlapped the search window"};
     return v;
   }
   std::stable_sort(scored.begin(), scored.end(), [](auto* a, auto* b) { return a->best()->score > b->best()->score; });

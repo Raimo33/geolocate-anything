@@ -89,6 +89,10 @@ struct Candidate {
 };
 
 enum class AirLevel { None, Weak, Moderate, Strong };
+// One flyover alone reaches moderate only with a near-straight-pass fit: speech and
+// room noise make single poor-fit "flyovers" that some flight in a busy window explains
+// (a council meeting matched to a helicopter 664 km away at fit 0.61).
+inline constexpr double SINGLE_FLYOVER_MODERATE_FIT = 0.8;
 const char* air_level_name(AirLevel l);
 
 struct SearchResult {
@@ -114,10 +118,17 @@ struct SearchResult {
 SearchResult search(const Spectrogram& spec, const std::vector<Event>& events, const std::vector<Track>& segments, Terrain& terrain,
                     const SearchOptions& o);
 
-// The same over a large box, one region at a time (bounded memory): tracks_for(box)
-// returns the gap-free segments with fixes inside the box; candidates are merged and
-// judged together.
-using TrackSource = std::function<std::vector<Track>(const Bbox&)>;
+// The same over a large box and a long start window, one region and one time slice at a
+// time (bounded memory): tracks_for(box, t0, t1) returns the gap-free segments with fixes
+// inside the box between t0 and t1; candidates are merged and judged together. Start
+// windows longer than SEARCH_SLICE_S are cut into slices of that length, and a slice whose
+// tracks exceed SEARCH_MAX_SEGMENTS is halved (down to SEARCH_MIN_SLICE_S), so memory
+// follows the traffic of a slice, not the window (a whole AirVenture day in Wisconsin
+// needed >3.2 GB at once). Tracks are loaded only around the flyovers' times.
+inline constexpr double SEARCH_SLICE_S = 4 * 3600.0;
+inline constexpr double SEARCH_MIN_SLICE_S = 600.0;
+inline constexpr std::size_t SEARCH_MAX_SEGMENTS = 400;
+using TrackSource = std::function<std::vector<Track>(const Bbox&, double t0, double t1)>;
 SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& events, const TrackSource& tracks_for, Terrain& terrain,
                             const SearchOptions& o, double region_deg = 3.0, const std::function<void(const std::string&)>& progress = {});
 void judge(SearchResult& r);

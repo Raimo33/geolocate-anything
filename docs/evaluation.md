@@ -27,14 +27,14 @@ stream (Opus ~128 kbit/s, 48 kHz).
 | Recording | Hum | Dated | Blind | Start error | Aircraft |
 |---|---|---|---|---|---|
 | Long Island security cam | 60 Hz | STRONG us_eastern | STRONG us_eastern | −1 s | STRONG, **80 m** from truth (2 flyovers) |
-| Älvsbyn SE | 50 Hz | STRONG nordic | STRONG nordic | −7 s | false fix, *moderate*, 664 km off |
+| Älvsbyn SE | 50 Hz | STRONG nordic | STRONG nordic | −7 s | false fix, weak, 664 km off (moderate before fix 2) |
 | Heath TX | 60 Hz | STRONG ercot | STRONG ercot | −3 s | – |
 | Sunset Valley TX (34 edit points) | 60 Hz | STRONG ercot | STRONG ercot | −4 s | false fix, weak, 213 km off |
 | Bristol GB | 50 Hz (weak) | none | none | – | – |
 | Canterbury GB | 50 Hz (8 dB) | none | none | – | false fix, weak, 16 850 km off (blind) |
 | Mannheim, Innsbruck, Gmunden, Iitti, Columbus, Bend | not detected | none | none | – | – |
 | Oshkosh mass arrival | – | – | – | – | 0 flyovers detected |
-| Oshkosh Sunday 3.7 h | – | – | – | – | **killed: >3.2 GB RAM** |
+| Oshkosh Sunday 3.7 h | – | – | – | – | killed at >3.2 GB RAM; after fix 1, 1.6 GB but stopped unfinished after 4 h |
 | Aberdeen | – | – | – | – | weak, 47 km off, wrong time |
 
 In short:
@@ -51,21 +51,38 @@ In short:
   80 m. Streams with commentary (Oshkosh, Aberdeen) have either no detectable flyovers or too few
   to agree.
 
-## Problems found
+## Problems found, and what changed
 
-1. **Aircraft search memory grows with traffic in the window, not with the recording.** The
-   3.7 h Oshkosh file has 1 detected flyover, yet `locate` (±1 day, Wisconsin bounding box,
-   AirVenture week) is OOM-killed at 2.5 GB and again at 3.2 GB in the "time window" stage.
-   The first 45 min (0 flyovers) need 0.7 GB.
-2. **Over-confident aircraft fix from one event.** In an indoor council meeting (Älvsbyn), a
-   single detected "flyover" (fit 0.61 of a straight pass) is matched to a helicopter 664 km away
-   and graded **moderate**: the hum-pinned ±3 s window leaves 3 candidate segments, so "lead over
-   the next 100%" means little. A single event with a poor fit should cap at weak.
-3. **False flyovers in indoor speech.** Council meetings yield 1–18 "flyovers" each. The ones
-   that reach a fix are graded weak, except item 2.
-4. **Misleading verdict reason.** When every grid was scored but none had a consistent match,
-   the verdict says "no reference data overlapped the search window" (`match::judge` counts only
-   grids with a consistent best candidate). It should say that no grid matched consistently.
+1. **Aircraft search memory grew with traffic in the window, not with the recording.**
+   - The 3.7 h Oshkosh file has 1 detected flyover. Even so, `locate` (±1 day, Wisconsin
+     bounding box, AirVenture week) was OOM-killed at 2.5 GB, and again at 3.2 GB, in the
+     "time window" stage.
+   - *Fixed:* `search_regions` now also cuts the start window into 4 h slices. A slice whose
+     region loads more than 400 flight segments is halved, down to 10 min. Each slice loads
+     tracks only around the flyovers' times
+     ([architecture](aircraft/architecture.md#5-search-searchcpp)).
+   - The same run now holds at 1.6 GB. Traffic peaks at ~800 segments in a 10 min slice.
+   - *Still open:* run time. One flyover over AirVenture traffic is CPU-bound. The run was
+     stopped after 4 h with half the 48 h window searched. A narrower window (`--from/--to`)
+     or bounding box is the workaround.
+2. **Over-confident aircraft fix from one event.**
+   - In an indoor council meeting (Älvsbyn), a single detected "flyover" (fit 0.61 of a
+     straight pass) was matched to a helicopter 664 km away and graded **moderate**. The
+     hum-pinned ±3 s window leaves 3 candidate segments, so a 100% lead over the next
+     combination means little.
+   - *Fixed:* one flyover reaches moderate only with a fit of at least 0.8
+     (`SINGLE_FLYOVER_MODERATE_FIT`, applied in `judge` and in the hum-and-aircraft fusion).
+     Älvsbyn is now weak.
+   - Colsto's two-flyover strong fix (80 m) is unchanged.
+3. **False flyovers in indoor speech.** Council meetings yield 1–18 "flyovers" each. The
+   detector is not retuned on this set, to avoid fitting the test.
+   - *Mitigated:* every false fix is now graded weak.
+4. **Misleading verdict reason.**
+   - When every grid was scored but none had a consistent match, the verdict said "no reference
+     data overlapped the search window", because `match::judge` counted only grids with a
+     consistent best candidate.
+   - *Fixed:* it now says "no grid matched consistently at any time in the search window". It
+     keeps the old reason only when no grid had any candidate at all (Bristol).
 
 ## Reproducing
 

@@ -4,6 +4,7 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -617,6 +618,7 @@ void judge(SearchResult& res) {
   else if (min_fit >= 0.5 && margin >= 0.1) res.level = AirLevel::Moderate;
   else res.level = AirLevel::Weak;
   if (nm < 2 && res.level == AirLevel::Strong) res.level = AirLevel::Moderate;
+  if (nm < 2 && min_fit < SINGLE_FLYOVER_MODERATE_FIT && res.level == AirLevel::Moderate) res.level = AirLevel::Weak;
 }
 
 SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& events, const TrackSource& tracks_for, Terrain& terrain,
@@ -628,29 +630,77 @@ SearchResult search_regions(const Spectrogram& spec, const std::vector<Event>& e
   for (double la = o.box.south; la < o.box.north; la += region_deg)
     for (double lo = o.box.west; lo < o.box.east; lo += region_deg)
       regions.push_back({lo, la, std::min(lo + region_deg, o.box.east), std::min(la + region_deg, o.box.north)});
+  // Start-time slices: a track can explain a flyover only around the flyover's own time
+  // in the recording, so a slice needs the tracks from its first start plus the earliest
+  // flyover to its last start plus the latest one (the whole recording when silence is
+  // checked over all of it).
+  double lead = 0, tail = spec.duration_s;
+  if (!o.silence_whole && !events.empty()) {
+    lead = INFINITY, tail = -INFINITY;
+    for (auto& e : events) {
+      const double hw = e.half_window_s * std::max(1.0, o.window_factor);
+      lead = std::min(lead, e.tc_lo - hw), tail = std::max(tail, e.tc_hi + hw);
+    }
+  }
+  struct Cell {
+    std::size_t region;
+    double s0, s1;
+  };
+  // Busy airspace (a whole AirVenture day) is cut finer: a slice whose tracks exceed
+  // SEARCH_MAX_SEGMENTS is halved until it fits or reaches SEARCH_MIN_SLICE_S.
+  std::vector<Cell> stack;
+  const int n_slices = std::max(1, int(std::ceil((o.start_max - o.start_min) / SEARCH_SLICE_S)));
+  for (int k = n_slices - 1; k >= 0; --k) {
+    const double a = o.start_min + k * (o.start_max - o.start_min) / n_slices;
+    const double b = k + 1 == n_slices ? o.start_max : o.start_min + (k + 1) * (o.start_max - o.start_min) / n_slices;
+    for (std::size_t r = regions.size(); r-- > 0;) stack.push_back({r, a, b});
+  }
   SearchResult all;
   std::map<std::string, std::size_t> by_combo;
-  // Per-region budgets shrink with the number of regions (a wide box would otherwise
-  // refine every region's local best), and a region's survivors must come within 60% of
-  // the best answer found so far to be refined at all.
-  const double share = std::min(1.0, 4.0 / double(std::max<std::size_t>(1, regions.size())));
+  // Per-cell budgets shrink with the number of cells (a wide box or long window would
+  // otherwise refine every cell's local best), and a cell's survivors must come within 60%
+  // of the best answer found so far to be refined at all.
+  std::size_t n_cells = stack.size();
   double best_so_far = -INFINITY;
-  for (std::size_t i = 0; i < regions.size(); ++i) {
-    SearchOptions ro = o;
-    ro.box = regions[i];
-    ro.max_scored = std::max(100, int(o.max_scored * share));
-    ro.max_subgrid = std::max(30, int(o.max_subgrid * share));
-    ro.max_refine = regions.size() > 4 ? 2 : o.max_refine;
-    if (std::isfinite(best_so_far)) ro.score_floor = std::max(o.score_floor, 0.6 * best_so_far);
+  while (!stack.empty()) {
+    const Cell cell = stack.back();
+    stack.pop_back();
+    const Bbox& box = regions[cell.region];
     const auto t_load = std::chrono::steady_clock::now();
-    auto tracks = tracks_for(regions[i].grown(std::max(15000.0, 2 * o.silence_factor * 9000.0)));
+    auto tracks = tracks_for(box.grown(std::max(15000.0, 2 * o.silence_factor * 9000.0)), cell.s0 + lead - 600, cell.s1 + tail + 600);
     all.wall_load += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_load).count();
+    const bool split = tracks.size() > SEARCH_MAX_SEGMENTS && cell.s1 - cell.s0 > 2 * SEARCH_MIN_SLICE_S;
     if (progress) {
-      char b[160];
-      std::snprintf(b, sizeof b, "region %zu/%zu [%.1f,%.1f,%.1f,%.1f]: %zu flight segments", i + 1, regions.size(), regions[i].west, regions[i].south,
-                    regions[i].east, regions[i].north, tracks.size());
+      char b[240];
+      auto hm = [](double t) {
+        const std::time_t s = std::time_t(t);
+        std::tm tm{};
+        gmtime_r(&s, &tm);
+        char out[16];
+        std::strftime(out, sizeof out, "%d %H:%M", &tm);
+        return std::string(out);
+      };
+      std::snprintf(b, sizeof b, "region %zu/%zu [%.1f,%.1f,%.1f,%.1f], starts %s..%s UTC: %zu flight segments%s", cell.region + 1, regions.size(),
+                    box.west, box.south, box.east, box.north, hm(cell.s0).c_str(), hm(cell.s1).c_str(), tracks.size(), split ? ", splitting" : "");
       progress(b);
     }
+    if (split) {
+      const double mid = 0.5 * (cell.s0 + cell.s1);
+      tracks.clear();
+      tracks.shrink_to_fit();
+      stack.push_back({cell.region, mid, cell.s1});
+      stack.push_back({cell.region, cell.s0, mid});
+      ++n_cells;
+      continue;
+    }
+    const double share = std::min(1.0, 4.0 / double(n_cells));
+    SearchOptions ro = o;
+    ro.box = box;
+    ro.start_min = cell.s0, ro.start_max = cell.s1;
+    ro.max_scored = std::max(100, int(o.max_scored * share));
+    ro.max_subgrid = std::max(30, int(o.max_subgrid * share));
+    ro.max_refine = n_cells > 4 ? 2 : o.max_refine;
+    if (std::isfinite(best_so_far)) ro.score_floor = std::max(o.score_floor, 0.6 * best_so_far);
     if (tracks.empty()) continue;
     auto r = search(spec, events, tracks, terrain, ro);
     all.segments += r.segments, all.corridor_cells += r.corridor_cells, all.consistent_cells += r.consistent_cells;

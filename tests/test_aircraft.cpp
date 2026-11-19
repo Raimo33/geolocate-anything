@@ -704,3 +704,21 @@ TEST(Aircraft, AreaPolygon) {
   EXPECT_THROW(parse_area("0,0;1,1;2,x"), std::invalid_argument);
   EXPECT_THROW(parse_area("0,0;1,1;200,2"), std::invalid_argument);
 }
+
+// One flyover with a poor straight-pass fit (speech in a council chamber matched to a
+// helicopter 664 km away at fit 0.61) stays weak however far it leads; a clean one is moderate.
+TEST(AircraftJudge, SingleFlyoverNeedsAGoodFitForModerate) {
+  auto one = [](double fit) {
+    SearchResult r;
+    Candidate c;
+    c.score = 7;
+    Match m;
+    m.fit = fit;
+    c.matches.push_back(m);
+    r.candidates.push_back(c);
+    judge(r);
+    return r.level;
+  };
+  EXPECT_EQ(one(0.61), AirLevel::Weak);
+  EXPECT_EQ(one(0.95), AirLevel::Moderate);
+}

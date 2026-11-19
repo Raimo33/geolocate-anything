@@ -166,6 +166,14 @@ survivors must come within 60% of the best answer found so far. A time window un
 6 h (a hum second) is searched in one pass over the whole box instead: few tracks
 fly in it even over a continent, and the tiles then run in parallel.
 
+Long start windows are also cut in time: 4 h slices of the recording's start. A slice
+whose region loads more than 400 flight segments is halved, down to 10 min. Each slice
+loads only the tracks around the flyovers' own times: its first start plus the earliest
+flyover, to its last start plus the latest. Memory therefore follows a slice's traffic,
+not the window's or the recording's length. A 3.7 h recording at Oshkosh, searched
+±1 day during AirVenture, needed more than 3.2 GB in 3° regions alone. Peak traffic
+there packs 1,520 segments into one 4 h slice.
+
 ### Rest-frequency prior: measured
 
 | Case | Without (`--no-type-prior`) | With |
