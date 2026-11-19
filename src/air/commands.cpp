@@ -39,6 +39,8 @@ void print_events(const std::vector<Event>& ev) {
     auto& e = ev[i];
     std::printf("  #%zu  CPA at %8.2f s [%.2f..%.2f]  speed %5.1f m/s [%.0f..%.0f]  slant %5.0f m [%.0f..%.0f]  f0 %6.1f Hz  score %5.1f (detect %.1f, %.0f MAD)\n",
                 i + 1, e.tc, e.tc_lo, e.tc_hi, e.v, e.v_lo, e.v_hi, e.d, e.d_lo, e.d_hi, e.f0, e.score, e.detect_score, e.significance);
+    std::printf("        ridge %.1f Hz: held %.0f%%, accelerating-pass misfit %.2f Hz over %d points, %+.2f m/s^2\n", e.ridge_hz,
+                100 * e.ridge_coverage, e.ridge_rmse_hz, e.ridge_points, e.accel);
     if (e.lines.size() > 1) {
       std::printf("        lines:");
       for (auto& l : e.lines) std::printf(" %.1f Hz (%.1f)", l.f0, l.score);
@@ -71,26 +73,35 @@ void register_commands(CLI::App& app, int& rc) {
   static std::string ev_file, ev_json;
   static std::vector<std::string> ev_windows;
   static double ev_fmin = 35, ev_fmax = 600, ev_thr = 0;
+  static bool ev_no_verify = false;
   ev->add_option("file", ev_file)->required();
   ev->add_option("--window", ev_windows, "only look for closest approaches in START:END (seconds from the start; repeatable)");
   ev->add_option("--fmin", ev_fmin, "lowest rest frequency searched (Hz)");
   ev->add_option("--fmax", ev_fmax, "highest rest frequency searched (Hz)");
   ev->add_option("--threshold", ev_thr, "detection score threshold (default: from the recording)");
   ev->add_option("--json", ev_json, "write the events here");
+  ev->add_flag("--no-verify", ev_no_verify, "keep detections whose tone the ridge check does not follow");
   ev->callback([&rc] {
     auto au = audio::load_audio(ev_file, SPEC_RATE);
     auto spec = whitened_spectrogram(au.samples);
     EventOptions o;
     o.windows = parse_windows(ev_windows);
-    o.fmin = ev_fmin, o.fmax = ev_fmax, o.threshold = ev_thr;
+    o.fmin = ev_fmin, o.fmax = ev_fmax, o.threshold = ev_thr, o.verify = !ev_no_verify;
     auto det = detect_events(spec, o);
     auto& events = det.events;
-    std::printf("noise: median %.1f, MAD %.2f; threshold %.1f\n", det.noise_median, det.noise_mad, det.threshold);
+    std::printf("speech in %.0f%% of frames; rising-template null: median %.1f, MAD %.2f; threshold %.1f\n", 100 * spec.speech_fraction, det.noise_median, det.noise_mad, det.threshold);
     print_events(events);
+    if (!det.rejected.empty()) {
+      std::printf("rejected by the ridge check: ");
+      print_events(det.rejected);
+    }
+    if (!det.duplicates.empty()) std::printf("%zu detection(s) dropped as a stronger flyover heard again\n", det.duplicates.size());
     if (!ev_json.empty()) {
-      json::array a;
+      json::array a, r;
       for (auto& e : events) a.push_back(event_json(e));
-      atomic_write(ev_json, dump(json::object{{"file", ev_file}, {"duration_s", au.duration()}, {"events", a}}, {.indent = 2}));
+      for (auto& e : det.rejected) r.push_back(event_json(e));
+      atomic_write(ev_json, dump(json::object{{"file", ev_file}, {"duration_s", au.duration()}, {"threshold", det.threshold},
+                                              {"events", a}, {"rejected", r}}, {.indent = 2}));
     }
     rc = events.empty() ? 2 : 0;
   });

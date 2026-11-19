@@ -97,3 +97,36 @@ The colsto recording (`colsto_4CxVxuMVkMc`, YouTube 4CxVxuMVkMc) is not a livest
 `release_timestamp`; its truth is DOPPLERGEIST's published start. `download` skips it: copy
 `~/.cache/geolocate-anything/wild/colsto_4CxVxuMVkMc.webm` into `$EVAL_AUDIO` and write an
 `info.json` with that start to include it.
+
+## Aircraft detector on a labelled set: Livermore (2026-11-19)
+
+Praveen Pathak's Livermore passages ([Zenodo 10.5281/zenodo.23424278](https://zenodo.org/records/23424278),
+CC BY 4.0) are 40 smartphone recordings (85–115 s), each of one propeller aircraft passing one recorder in
+May 2026. Each comes with its ADS-B track. The recorder's position is not published.
+`scripts/eval/livermore/truth.py` fits it from the tracks and the published closest ranges:
+37.66321, −121.78186, matching 37 of the 40 ranges to 3.5 m RMS (3 cases fall outside that fit and are marked
+unreliable). Harness: `scripts/eval/livermore/run.sh download | events TAG | locate TAG`.
+
+| Detector | Livermore passes found (CPA within 12 s) | ADS-B speed and slant inside the event's ranges | Other detections (40 single-pass clips) | Detections in the 11 council streams (no aircraft) |
+|---|---|---|---|---|
+| Before | **0 / 40** | – | 0 | 60 |
+| Rising-template threshold, ridge check, same-source rule, speech mask | **28 / 40** | 20 / 28 | 6 | 15 |
+
+Why the old detector failed:
+- **Threshold.** It was set from the recording's own falling-template scores. In a short clip the one pass
+  fills most instants and lifts the threshold above itself (R01: threshold 91, pass 66).
+- **Speech.** Commentary lifts the same distribution: at Oshkosh, real flyovers scored 3–5 MAD and the
+  threshold was 6.
+
+The changes are described in [aircraft/architecture.md §2](aircraft/architecture.md#2-flyovers-in-the-recording-spectrogramcpp-eventscpp-ridgecpp).
+The speech mask flags 50–94% of the council, Oshkosh and Aberdeen streams, 1% of colsto and 0–2% of Livermore.
+colsto still gives exactly its two flyovers.
+
+Still open:
+- **Missed passes (12 of 40).** 1 is faster than the 180 m/s template limit (R50, 216 m/s). 3 are rejected
+  by the ridge check (misfit 1.1–2.0 Hz, or the tone held in under 25% of the window). The others have no
+  detection near the expected time. Truth times carry the phone clock's offset from ADS-B (up to ~8 s).
+- **Speed and slant ranges miss the truth in 8 of the 28.** Mostly slow or close passes where the fit
+  trades speed against distance (R41, R35, R36) or settles on an acceleration of ±2 m/s².
+- **The end-to-end `locate` run on Livermore** (one flyover each, start known to ±15 s, town box) and a
+  rerun of the YouTube set through `geoloc locate` have not been run yet.

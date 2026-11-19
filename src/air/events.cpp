@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <mutex>
 
 #include "air/doppler.hpp"
+#include "air/ridge.hpp"
 #include "util/parallel.hpp"
 
 namespace geo::air {
@@ -15,6 +18,7 @@ struct Template {
   double v, d, hw;
   int m0;                // first pooled-frame offset relative to the CPA frame
   std::vector<int> sh;   // log-bin shift for each offset m0 .. m0 + size - 1
+  std::vector<int> shr;  // the same curve reversed in time: a rising tone no passing aircraft makes
   int lo, hi;            // min / max shift
 };
 
@@ -68,7 +72,7 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
   std::vector<Template> tmpl;
   for (double v = o.vmin; v <= o.vmax + 1e-9; v += 10.0)
     for (double d = o.dmin; d <= o.dmax * 1.0001; d *= 1.4) {
-      Template T{v, d, half_window(v, d), 0, {}, 0, 0};
+      Template T{v, d, half_window(v, d), 0, {}, {}, 0, 0};
       const int M = int(std::ceil(T.hw / dt));
       T.m0 = -M;
       double smin = INFINITY, smax = -INFINITY;
@@ -78,6 +82,7 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
         smin = std::min(smin, lr), smax = std::max(smax, lr);
       }
       if (smax - smin < o.min_swing) continue;
+      T.shr.assign(T.sh.rbegin(), T.sh.rend());
       T.lo = *std::min_element(T.sh.begin(), T.sh.end());
       T.hi = *std::max_element(T.sh.begin(), T.sh.end());
       tmpl.push_back(std::move(T));
@@ -92,6 +97,7 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
     int tmpl = -1, k = 0;
   };
   std::vector<Best> best(static_cast<std::size_t>(NT));
+  std::vector<float> rise(static_cast<std::size_t>(NT), -INFINITY);  // best score of a time-reversed template
   auto in_windows = [&](double t) {
     if (o.windows.empty()) return true;
     for (auto& [a, b] : o.windows)
@@ -101,11 +107,13 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
   parallel_for(std::size_t(NT), [&](std::size_t tu) {
     const int t = int(tu);
     if (!in_windows(t_of(t))) return;
-    std::vector<float> acc(static_cast<std::size_t>(K));
+    std::vector<float> acc(static_cast<std::size_t>(K)), accr(static_cast<std::size_t>(K));
     Best b;
+    float br = -INFINITY;
     for (std::size_t ti = 0; ti < tmpl.size(); ++ti) {
       const Template& T = tmpl[ti];
       std::fill(acc.begin(), acc.end(), 0.0f);
+      std::fill(accr.begin(), accr.end(), 0.0f);
       int n = 0;
       // acc[k] = sum_m L[t+m][k + sh[m]] for k with every shifted index inside [0, K).
       const int ka = std::max(0, -T.lo), kb = std::min(K, K - T.hi);
@@ -115,6 +123,8 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
         if (tt < 0 || tt >= NT) continue;
         const float* row = L.data() + std::size_t(tt) * std::size_t(K) + T.sh[i];
         for (int k = ka; k < kb; ++k) acc[std::size_t(k)] += row[k];
+        const float* rowr = L.data() + std::size_t(tt) * std::size_t(K) + T.shr[i];
+        for (int k = ka; k < kb; ++k) accr[std::size_t(k)] += rowr[k];
         ++n;
       }
       if (n < int(T.sh.size()) / 2) continue;
@@ -126,25 +136,44 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
           sc = std::max(sc, comb);
         }
         if (sc > b.score) b = {sc, int(ti), k};
+        float scr = accr[std::size_t(k)] * norm;
+        if (k + h3 < kb)
+          scr = std::max(scr, (accr[std::size_t(k)] + accr[std::size_t(k + h2)] + accr[std::size_t(k + h3)]) * norm / std::sqrt(3.0f));
+        br = std::max(br, scr);
       }
     }
     best[tu] = b;
+    rise[tu] = br;
   });
 
-  // 3. Threshold from the recording's own distribution: most instants hold no flyover,
-  //    so the median and MAD of the per-instant best describe the noise maximum.
-  std::vector<double> sc;
-  for (auto& b : best)
-    if (std::isfinite(b.score)) sc.push_back(b.score);
-  if (sc.size() < 8) return res;
+  if (const char* dbg = std::getenv("GEOLOC_EVENTS_DEBUG")) {
+    FILE* f = std::fopen(dbg, "w");
+    for (int t = 0; t < NT; ++t) std::fprintf(f, "%.2f\t%.2f\t%.2f\n", t_of(t), best[std::size_t(t)].score, rise[std::size_t(t)]);
+    std::fclose(f);
+  }
+  // 3. Threshold from a null that no aircraft feeds. A passing aircraft's tone only falls;
+  //    the same templates reversed in time (rising curves) meet the recording's noise,
+  //    speech, wind and clutter as often as the falling ones do, but not its flyovers.
+  //    The per-instant best of the falling templates was its own null before; in a short
+  //    clip that one pass fills most instants and lifted the threshold above itself.
+  //    A strong pass still feeds the rising templates where they cross the flat parts of its
+  //    curve, so instants where a falling curve clearly wins (by 1.5 times) stay out of the
+  //    null, unless that leaves too few to measure it.
+  std::vector<double> sc, all;
+  for (int t = 0; t < NT; ++t) {
+    const float r = rise[std::size_t(t)], f = best[std::size_t(t)].score;
+    if (!std::isfinite(r)) continue;
+    all.push_back(r);
+    if (!(f > 1.5f * std::max(r, 1.0f))) sc.push_back(r);
+  }
+  if (all.size() < 8) return res;
+  if (sc.size() < std::max<std::size_t>(40, all.size() / 5)) sc = all;
   const double med = median(sc);
   std::vector<double> dev;
   for (double x : sc) dev.push_back(std::abs(x - med));
-  const double mad = 1.4826 * median(dev);
-  // The per-instant best is a maximum over many templates and frequencies, and clutter
-  // (boats, cars, birds) fattens its upper tail: k = 6 robust deviations keeps clear
-  // flyovers and some clutter, which the search ignores when no aircraft explains it.
-  const double thr = o.threshold > 0 ? o.threshold : std::max(med + 6.0 * mad, 6.0);
+  const double mad = std::max(0.5, 1.4826 * median(dev));
+  // k = 6 robust deviations of the rising null, as before of the falling scores.
+  const double thr = o.threshold > 0 ? o.threshold : std::max(med + o.null_k * mad, 6.0);
   res.threshold = thr, res.noise_median = med, res.noise_mad = mad;
   std::vector<int> order;
   for (int t = 0; t < NT; ++t)
@@ -159,6 +188,32 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
   }
 
   // 4. Refinement on the full spectrogram, then the near-optimal parameter ranges.
+  // The curve of each kept event's traced line, to recognise the same source detected again.
+  struct Kept {
+    double tc, v, d, f, a;
+  };
+  std::vector<Kept> kept;
+  auto same_source = [&](const Ridge& r) {
+    // A distant, slowly sweeping template fits the approaching or receding tail of a strong
+    // pass 20-40 s from its CPA: such a detection's tone lies, most of the time, on a
+    // harmonic (p/q, q <= 4) of a stronger event's curve.
+    for (const Kept& k : kept) {
+      int n = 0, on = 0;
+      for (std::size_t i = 0; i < r.t.size(); ++i) {
+        if (!r.held[i]) continue;
+        const double fk = k.f * ca_ratio(r.t[i], k.tc, k.v, k.d, k.a);
+        if (!std::isfinite(fk)) continue;
+        ++n;
+        const double q = r.f[i] / fk;
+        bool hit = false;
+        for (int den = 1; den <= 4 && !hit; ++den)
+          for (int num = 1; num <= 3 * den * 4 && !hit; ++num) hit |= std::abs(q * den / num - 1) < 0.012;
+        on += hit;
+      }
+      if (n >= 12 && on >= 0.6 * n) return true;
+    }
+    return false;
+  };
   for (int t : peaks) {
     const Best& b = best[std::size_t(t)];
     const Template& T = tmpl[std::size_t(b.tmpl)];
@@ -217,6 +272,32 @@ Detection detect_events(const Spectrogram& s, const EventOptions& o) {
       if (best_line.score >= std::max(5.0, 0.3 * e.score)) e.lines.push_back(best_line);
     }
     std::sort(e.lines.begin(), e.lines.end(), [](const Line& a, const Line& b) { return a.score > b.score; });
+    // Follow the strongest line in the spectrogram and fit an accelerating pass to it.
+    e.ridge_hz = e.lines.front().f0;
+    const Ridge rg = trace_ridge(s, e.tc, e.v, e.d, e.ridge_hz, e.half_window_s);
+    e.ridge_coverage = rg.coverage;
+    const PassFit pf = fit_pass(rg, e.tc, e.v, e.d, e.ridge_hz);
+    if (pf.ok) {
+      e.ridge_rmse_hz = pf.rmse_hz, e.ridge_points = pf.n, e.accel = pf.a;
+      e.fit_tc = pf.tc, e.fit_v = pf.v, e.fit_d = pf.d;
+      // An aircraft speeding up or slowing down fits a straight pass at the wrong speed
+      // and distance: the ranges grow to hold the accelerating fit too.
+      if (pf.rmse_hz <= o.max_rel_rmse * e.ridge_hz && std::abs(pf.tc - e.tc) < 6.0) {
+        e.tc_lo = std::min(e.tc_lo, pf.tc), e.tc_hi = std::max(e.tc_hi, pf.tc);
+        e.v_lo = std::min(e.v_lo, pf.v), e.v_hi = std::max(e.v_hi, pf.v);
+        e.d_lo = std::min(e.d_lo, pf.d), e.d_hi = std::max(e.d_hi, pf.d);
+      }
+    }
+    if (same_source(rg)) {
+      res.duplicates.push_back(std::move(e));
+      continue;
+    }
+    if (o.verify && (e.ridge_coverage < o.min_coverage || !(e.ridge_rmse_hz <= o.max_rel_rmse * e.ridge_hz))) {
+      res.rejected.push_back(std::move(e));
+      continue;
+    }
+    if (pf.ok) kept.push_back({pf.tc, pf.v, pf.d, pf.f0, pf.a});
+    else kept.push_back({e.tc, e.v, e.d, e.ridge_hz, 0.0});
     out.push_back(std::move(e));
   }
   std::sort(out.begin(), out.end(), [](const Event& a, const Event& b) { return a.tc < b.tc; });
@@ -231,6 +312,10 @@ json::object event_json(const Event& e) {
           {"cpa_m", e.d},       {"cpa_range_m", json::array{e.d_lo, e.d_hi}},
           {"f0_hz", e.f0},      {"score", e.score},
           {"detect_score", e.detect_score}, {"significance", e.significance}, {"half_window_s", e.half_window_s},
+          {"ridge_hz", e.ridge_hz}, {"ridge_coverage", e.ridge_coverage},
+          {"ridge_rmse_hz", num_or_null(e.ridge_rmse_hz)},
+          {"ridge_points", e.ridge_points}, {"accel_ms2", e.accel},
+          {"fit_tc_s", num_or_null(e.fit_tc)}, {"fit_speed_ms", num_or_null(e.fit_v)}, {"fit_cpa_m", num_or_null(e.fit_d)},
           {"lines", lines}};
 }
 
@@ -247,6 +332,10 @@ Event event_from_json(const json::value& v) {
   range("cpa_range_m", e.d_lo, e.d_hi, e.d);
   e.score = jnum(v, "score", 0), e.detect_score = jnum(v, "detect_score", 0), e.significance = jnum(v, "significance", 0);
   e.half_window_s = jnum(v, "half_window_s", half_window(e.v, e.d));
+  e.ridge_hz = jnum(v, "ridge_hz", e.f0), e.ridge_coverage = jnum(v, "ridge_coverage", 0);
+  if (const json::value* r = jget(v, "ridge_rmse_hz"); r && r->is_number()) e.ridge_rmse_hz = as_number(*r);
+  e.ridge_points = int(jnum(v, "ridge_points", 0)), e.accel = jnum(v, "accel_ms2", 0);
+  e.fit_tc = jnum(v, "fit_tc_s", NAN), e.fit_v = jnum(v, "fit_speed_ms", NAN), e.fit_d = jnum(v, "fit_cpa_m", NAN);
   if (const json::value* ls = jget(v, "lines"); ls && ls->is_array())
     for (auto& l : ls->as_array()) e.lines.push_back({jnum(l, "f0_hz"), jnum(l, "score", 0)});
   if (e.lines.empty()) e.lines.push_back({e.f0, e.score});

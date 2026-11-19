@@ -97,6 +97,7 @@ add_library(geoloc_core STATIC
   src/air/doppler.cpp
   src/air/spectrogram.cpp
   src/air/events.cpp
+  src/air/ridge.cpp
   src/air/bucket.cpp
   src/air/terrain.cpp
   src/air/fusion.cpp

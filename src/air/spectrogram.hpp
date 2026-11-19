@@ -8,6 +8,7 @@
 // curve behave like sums of unit-variance noise plus signal.
 #pragma once
 
+#include <cmath>
 #include <span>
 #include <vector>
 
@@ -23,6 +24,15 @@ struct SpecOptions {
   double fmin = 20.0, fmax = 1200.0;
   double baseline_s = 45.0;
   float clip_lo = -3.0f, clip_hi = 8.0f;
+  // Speech: frames whose 300-1800 Hz envelope swings at the syllable rate (2-8 Hz holds at
+  // least speech_mod of the 0.5-20 Hz modulation power, log-energy spread >= speech_sd over
+  // 1.28 s). Commentary, meetings and chat put harmonic stacks with gliding pitch into the
+  // aircraft band; in those frames the whitened value is capped at speech_cap, so a pitch
+  // glide cannot outscore a tone held for tens of seconds, and the per-bin spread is
+  // measured on the other frames.
+  bool speech_mask = true;
+  double speech_mod = 0.5, speech_sd = 0.8;
+  float speech_cap = 1.5f;
 };
 
 struct Spectrogram {
@@ -33,6 +43,12 @@ struct Spectrogram {
   int nf = 0;     // frames
   std::vector<float> z;  // nf x nb
   double duration_s = 0;
+  std::vector<unsigned char> speech;  // per frame: 1 where speech was found (empty: not looked for)
+  float speech_cap = INFINITY;         // the cap applied in those frames
+  bool is_speech(int j) const { return j >= 0 && std::size_t(j) < speech.size() && speech[std::size_t(j)]; }
+  // The level at which a tone counts as present in frame j (2, or just under the cap in speech).
+  float held_level(int j) const { return is_speech(j) ? std::min(2.0f, 0.9f * speech_cap) : 2.0f; }
+  double speech_fraction = 0;
 
   double frame_time(double j) const { return (j * hop + win * 0.5) / rate; }  // centre, s from start
   double frame_at(double t) const { return (t * rate - win * 0.5) / hop; }

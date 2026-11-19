@@ -17,6 +17,7 @@
 #include "air/events.hpp"
 #include "air/fusion.hpp"
 #include "air/geodesy.hpp"
+#include "air/ridge.hpp"
 #include "air/search.hpp"
 #include "air/spectrogram.hpp"
 #include "air/terrain.hpp"
@@ -118,7 +119,135 @@ std::vector<double> render(const std::vector<std::pair<Path, std::vector<double>
   return x;
 }
 
+// A pass along x at constant acceleration a: speed v and slant d at closest approach,
+// reached at epoch tcpa (emission), sampled every 2 s.
+Path accelerating_pass(double v, double a, double d, double tcpa, double t0, double t1) {
+  std::vector<PathPoint> pts;
+  for (double t = t0; t <= t1 + 1e-9; t += 2) {
+    const double u = t - tcpa;
+    if (v + a * u < 8) continue;
+    pts.push_back({t, {v * u + 0.5 * a * u * u, d * 0.6, d * 0.8}, {v + a * u, 0, 0}});
+  }
+  return Path(std::move(pts));
+}
+
+// Speech-like clutter: a harmonic stack (10 harmonics, 1/k) whose pitch glides 110-260 Hz,
+// switched on and off at the syllable rate (bursts of 0.12-0.3 s, gaps of 0.05-0.2 s,
+// pauses of 0.5-1.5 s between phrases).
+void add_speech(std::vector<double>& x, double t0, double t1, double amp, unsigned seed) {
+  const int rate = SPEC_RATE;
+  std::mt19937_64 rng(seed);
+  std::uniform_real_distribution<double> U(0, 1);
+  double t = t0, ph = 0;
+  while (t < t1) {
+    const int syll = 3 + int(U(rng) * 6);
+    for (int k = 0; k < syll && t < t1; ++k) {
+      const double len = 0.12 + 0.18 * U(rng), p0 = 110 + 150 * U(rng), p1 = 110 + 150 * U(rng);
+      for (std::size_t i = std::size_t(t * rate); i < std::min(x.size(), std::size_t((t + len) * rate)); ++i) {
+        const double u = (double(i) / rate - t) / len, pitch = p0 + (p1 - p0) * u, env = std::sin(std::numbers::pi * u);
+        ph += 2 * std::numbers::pi * pitch / rate;
+        double y = 0;
+        for (int h = 1; h <= 10; ++h) y += std::sin(h * ph) / h;
+        x[i] += amp * env * y;
+      }
+      t += len + 0.05 + 0.15 * U(rng);
+    }
+    t += 0.5 + U(rng);
+  }
+}
+
+std::string describe(const Detection& det) {
+  std::string m = "threshold " + std::to_string(det.threshold);
+  for (auto* L : {&det.events, &det.rejected, &det.duplicates})
+    for (auto& e : *L)
+      m += std::string(L == &det.events ? "\n kept" : L == &det.rejected ? "\n rejected" : "\n duplicate") + " tc " + std::to_string(e.tc) +
+           " v " + std::to_string(e.v) + " d " + std::to_string(e.d) + " ridge " + std::to_string(e.ridge_hz) + " Hz, detect " +
+           std::to_string(e.detect_score) + " cov " + std::to_string(e.ridge_coverage) + " rmse " + std::to_string(e.ridge_rmse_hz) +
+           " acc " + std::to_string(e.accel);
+  return m;
+}
+
 }  // namespace
+
+TEST(AircraftDoppler, AcceleratingPassModel) {
+  // a = 0 is the closed form; a != 0 matches brute-force emission times of the same motion.
+  const double v = 60, d = 900, tc = 100, c = SOUND_SPEED;
+  for (double t : {40.0, 90.0, 100.0, 103.0, 160.0}) EXPECT_NEAR(ca_ratio(t, tc, v, d, 0.0), cv_ratio(t, tc, v, d), 1e-12);
+  for (double a : {-0.8, 0.6})
+    for (double t : {50.0, 95.0, 100.0, 108.0, 150.0}) {
+      // reception t = tc + tau + (r(tau) - d)/c: bisection on tau.
+      double lo = -200, hi = 200;
+      for (int i = 0; i < 200; ++i) {
+        const double m = 0.5 * (lo + hi), s = v * m + 0.5 * a * m * m;
+        (tc + m + (std::hypot(s, d) - d) / c < t ? lo : hi) = m;
+      }
+      const double tau = 0.5 * (lo + hi), s = v * tau + 0.5 * a * tau * tau, u = v + a * tau;
+      EXPECT_NEAR(ca_ratio(t, tc, v, d, a), c / (c + s * u / std::hypot(s, d)), 1e-9) << "a " << a << " t " << t;
+    }
+}
+
+TEST(AircraftEvents, ShortClipWithOnePass) {
+  // A 100 s clip filled by one pass (the Livermore recordings): the threshold comes from
+  // rising templates, which the pass does not feed; before, the pass lifted its own threshold.
+  const double v = 80, d = 1500, tc = 50;
+  auto path = accelerating_pass(v, 0.0, d, tc - d / SOUND_SPEED, -100, 200);
+  auto x = render({{path, {121.0, 242.0}}}, {0, 0, 0}, 0, 100, 1.0, 1.0, 11);
+  auto det = detect_events(whitened_spectrogram(x));
+  ASSERT_EQ(det.events.size(), 1u) << describe(det);
+  const Event& e = det.events[0];
+  EXPECT_NEAR(e.tc, tc, 1.5);
+  EXPECT_LE(e.v_lo, v + 3);
+  EXPECT_GE(e.v_hi, v - 3);
+  EXPECT_LE(e.d_lo, d * 1.15);
+  EXPECT_GE(e.d_hi, d / 1.15);
+  EXPECT_GT(e.ridge_coverage, 0.5);
+  EXPECT_LT(e.ridge_rmse_hz, 0.6);
+}
+
+TEST(AircraftEvents, RidgeFitMeasuresASlowingPass) {
+  // Slowing at 0.8 m/s^2 through closest approach (an aircraft on approach): the template is
+  // a straight constant-speed pass, the ridge fit recovers the speed at CPA and the deceleration.
+  const double v = 55, a = -0.8, d = 600, tc = 90;
+  auto path = accelerating_pass(v, a, d, tc - d / SOUND_SPEED, -60, 250);
+  auto x = render({{path, {140.0, 280.0}}}, {0, 0, 0}, 0, 180, 0.6, 1.0, 13);
+  auto spec = whitened_spectrogram(x);
+  auto det = detect_events(spec);
+  ASSERT_GE(det.events.size(), 1u) << describe(det);
+  const Event& e = det.events[0];
+  EXPECT_LE(e.tc_lo, tc + 1.0) << describe(det);
+  EXPECT_GE(e.tc_hi, tc - 1.0) << describe(det);
+  EXPECT_NEAR(e.accel, a, 0.35);
+  EXPECT_LE(e.v_lo, v + 3);
+  EXPECT_GE(e.v_hi, v - 3);
+  const Ridge r = trace_ridge(spec, e.tc, e.v, e.d, e.ridge_hz, e.half_window_s);
+  const PassFit f = fit_pass(r, e.tc, e.v, e.d, e.ridge_hz);
+  ASSERT_TRUE(f.ok);
+  EXPECT_NEAR(f.tc, tc, 1.5);
+  EXPECT_NEAR(f.v, v, 6.0);
+  EXPECT_NEAR(f.d, d, 0.3 * d);
+}
+
+TEST(AircraftEvents, SpeechIsMaskedAndNotAFlyover) {
+  // Ten minutes of speech-like clutter over noise: flagged as speech, no flyover. With a
+  // pass under the same speech, the pass is still found.
+  auto x = render({}, {0, 0, 0}, 0, 600, 0, 1.0, 17);
+  add_speech(x, 0, 600, 10.0, 19);
+  auto spec = whitened_spectrogram(x);
+  EXPECT_GT(spec.speech_fraction, 0.5);
+  {
+    auto d0 = detect_events(spec);
+    EXPECT_TRUE(d0.events.empty()) << describe(d0);
+  }
+  const double v = 70, d = 1200, tc = 300;
+  auto path = accelerating_pass(v, 0.0, d, tc - d / SOUND_SPEED, -200, 800);
+  auto y = render({{path, {118.0, 236.0}}}, {0, 0, 0}, 0, 600, 1.5, 1.0, 17);
+  add_speech(y, 0, 600, 10.0, 19);
+  auto det = detect_events(whitened_spectrogram(y));
+  ASSERT_GE(det.events.size(), 1u) << describe(det);
+  bool found = false;
+  for (auto& e : det.events) found |= std::abs(e.tc - tc) < 3 && e.v_lo <= v + 5 && e.v_hi >= v - 5;
+  EXPECT_TRUE(found) << describe(det);
+}
 
 TEST(AircraftDoppler, ClosedFormMatchesRetardedTimeSolver) {
   // A straight pass at 120 m/s, closest approach 1500 m at t = 1000 (emission).

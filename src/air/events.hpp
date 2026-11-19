@@ -10,6 +10,7 @@
 // well (real aircraft turn and change speed, so ranges, not points, go to the search).
 #pragma once
 
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,10 +27,16 @@ struct EventOptions {
   double pool_s = 0.5;                // detection time step
   double logf_step = 0.0025;          // detection frequency step (relative)
   double min_swing = 0.04;            // a template must sweep at least this much in log f
-  double threshold = 0;               // detection score; 0 = from the recording's distribution
+  double threshold = 0;               // detection score; 0 = from the recording's rising-template null
+  double null_k = 6.0;                // threshold = null median + null_k * null MAD
   int max_events = 12;
   double min_separation_s = 30.0;
   std::vector<std::pair<double, double>> windows;  // only look for CPAs in these spans (s from start)
+  // Verification: a detection is kept only if its tone is followed through enough of the
+  // half window and one accelerating pass explains it (relative RMS misfit).
+  bool verify = true;
+  double min_coverage = 0.25;
+  double max_rel_rmse = 0.008;
 };
 
 struct Line {
@@ -45,8 +52,15 @@ struct Event {
   std::vector<Line> lines;              // every line of this source (f0 included), strongest first
   double score = 0;                     // refined curve score of the strongest line
   double detect_score = 0;              // detection statistic
-  double significance = 0;              // (detect_score - noise median) / noise MAD
+  double significance = 0;              // (detect_score - null median) / null MAD
   double half_window_s = 0;             // the curve is measured over tc +- this
+  // The tone followed in the spectrogram (ridge.hpp) and the accelerating-pass fit to it.
+  double ridge_hz = 0;                  // rest frequency of the line traced (the strongest)
+  double ridge_coverage = 0;            // fraction of frames within the half window holding the tone
+  double ridge_rmse_hz = INFINITY;      // RMS misfit of the accelerating pass (Hz, at ridge_hz)
+  int ridge_points = 0;
+  double accel = 0;                     // fitted along-track acceleration, m/s^2
+  double fit_tc = NAN, fit_v = NAN, fit_d = NAN;  // the accelerating fit's CPA time, speed, slant
 };
 
 // Mean z along f0 * cv_ratio(t) over frames with t in [tc - hw, tc + hw], times sqrt(n):
@@ -55,8 +69,10 @@ double cv_score(const Spectrogram& s, double tc, double v, double d, double f0, 
 
 struct Detection {
   std::vector<Event> events;   // in time order
+  std::vector<Event> rejected; // above the threshold but failed verification (strongest first)
+  std::vector<Event> duplicates;  // a stronger kept event's source heard again (its tail, a harmonic)
   double threshold = NAN;      // detection score used
-  double noise_median = NAN, noise_mad = NAN;  // of the per-instant best score
+  double noise_median = NAN, noise_mad = NAN;  // of the per-instant best rising-template score (the null)
 };
 Detection detect_events(const Spectrogram& s, const EventOptions& o = {});
 
