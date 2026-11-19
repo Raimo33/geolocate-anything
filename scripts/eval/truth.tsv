@@ -1,0 +1,16 @@
+id	kind	tier	place	grid	lat	lon	radius_km	aircraft_bbox
+-qK7OPHHRMU	grid	A	Mannheim DE	continental_europe	49.487	8.466	0	
+2PRPj6zVZMc	grid	A	Innsbruck AT	continental_europe	47.269	11.393	0	
+KEM7Chh8sMI	grid	A	Gmunden AT	continental_europe	47.918	13.799	0	
+ksy9WzjQuJI	grid	B	Bristol GB	great_britain	51.454	-2.588	0	
+R2t_bV5j5dM	grid	B	Canterbury GB	great_britain	51.280	1.079	0	
+L6cxayreMCY	grid	B	Älvsbyn SE	nordic	65.676	21.003	0	
+6uIXrwyv9sQ	grid	B	Iitti FI	nordic	60.889	26.336	0	
+LGh_1J0SO9o	grid	C	Columbus OH	us_eastern	39.961	-82.999	0	
+Wexa1_E-8TA	grid	C	Bend OR	us_western	44.058	-121.315	0	
+SO2qZYPF8Ck	grid	C	Sunset Valley TX	ercot	30.226	-97.815	0	
+OO3bswY_8Nw	grid	C	Heath TX	ercot	32.836	-96.475	0	
+Mcy7PEkVy2U	air	A	Oshkosh KOSH rwy36 yellow dot	us_eastern	43.984	-88.557	3	-90.5,42.5,-86.5,45.5
+WOFnYOk5HL0	air	B	Oshkosh KOSH rwy36 purple dot	us_eastern	43.984	-88.557	3	-90.5,42.5,-86.5,45.5
+Z9FfyyzvhI4	air	C	Aberdeen EGPD	great_britain	57.202	-2.198	4	-4,56.5,-1,58
+colsto_4CxVxuMVkMc	air	B	Long Island NY (security cam)	us_eastern	40.87693	-73.52498	0.5	-75,40.4,-71.8,41.4

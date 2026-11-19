@@ -78,7 +78,8 @@ slider or type the dates), the mains frequency (50 or 60 Hz), and an area drawn 
 with a lasso (only the grids inside it are searched, and an aircraft answer must fall inside it).
 
 For the command-line interface, environment variables and building from source, see
-[`docs/usage.md`](docs/usage.md).
+[`docs/usage.md`](docs/usage.md). Results on real recordings (hum and aircraft, easy to hard):
+[`docs/evaluation.md`](docs/evaluation.md).
 
 ## License
 
