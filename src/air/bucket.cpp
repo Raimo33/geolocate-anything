@@ -150,4 +150,22 @@ int push(const std::vector<std::string>& which) {
   return n;
 }
 
+bool get_object(const std::string& key, const fs::path& dst) {
+  const auto b = config();
+  bool found = false;
+  net::run_sync_void([&](asio::io_context& io) -> asio::awaitable<void> {
+    net::Http http(io);
+    found = co_await get(http, b, key, dst);
+  });
+  return found;
+}
+
+void put_object(const std::string& key, const fs::path& src) {
+  const auto b = config();
+  net::run_sync_void([&](asio::io_context& io) -> asio::awaitable<void> {
+    net::Http http(io);
+    co_await put(http, b, key, src);
+  });
+}
+
 }  // namespace geo::air::bucket

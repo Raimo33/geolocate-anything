@@ -70,6 +70,28 @@ video's hand measurements were 130–154 m/s, 4.3–7.8 km and 88–110 m/s, 1.4
 | **Chunk index** (sidecar `adsb/<day>.idx`) | Lets a search decompress only aircraft near its window; see [compression.md](compression.md#chunk-index). |
 | **Aircraft bucket** (`GEOLOC_AIRPLANE_BUCKET`, apart from the grid bucket): `adsb/<day>.trk` + `adsb/<day>.cov` | All of ADSB.lol's history (~1,350 days, ~65 GB) is built offline (`aircraft fetch 2023-03-01..YESTERDAY --push --drop`, ~3 min a day, download-bound) and kept there. A server's volume holds every day's coverage sidecar (pulled on start, for the map) and only the stores its analyses used last (`GEOLOC_AIRPLANE_KEEP_DAYS`), each downloaded on first use. The dashboard's **Fetch the latest data** (admin, `POST /api/adsb-refetch {"latest": true}`) fetches whichever of the last 7 UTC days are missing and uploads them (`{"day": D}` still rebuilds one day with `--force`). |
 | **Segments**: split at readsb leg starts and gaps > 120 s | No interpolation across gaps. |
+| **Gap days from OpenSky** (`aircraft opensky-day`, `opensky.cpp`): days ADSB.lol has no archive for (22 between 2023-03 and 2026-10, e.g. 2025-05-28..06-10), built from OpenSky's `state_vectors_data4`, one vector per aircraft every 5 s, into the same store (`adsb/<day>.source` = opensky) | The search, the server and the map need no second path. Queries are per hour and 15° latitude band (split when a band reaches 1M rows), each band-hour cached so a day resumes; the altitude rules are ADSB.lol's (GNSS, else barometric + the aircraft's offset, else its 2° cell's). OpenSky has no readsb leg starts: segments split at gaps only. |
+
+### OpenSky check (`opensky.cpp`)
+
+The silence test only knows the aircraft in its data. [The OpenSky Network](https://opensky-network.org)
+runs its own receivers, so a low aircraft ADSB.lol missed may be there. With `--opensky`,
+after the search ranks its answers:
+
+| Step | Choice | Why |
+|---|---|---|
+| Places | The best 5 answers (`--opensky-places`) | The ranking is decided there; checking every survivor would mean thousands of queries. |
+| Query | `state_vectors_data4`, one query per `hour` partition, the window snapped to 10 min inside it, a box of the place ± 30 km snapped to 0.1°; nine columns; `time % 5 = 0`, airborne, `time - lastcontact <= 15`, ≤ 200 m/s, ≤ 12 km; one query at a time; OAuth password grant, the Trino user the token's own | OpenSky's rules (partition filter always, tight windows, no `SELECT *`, at most 2 running per user) and its 1 Hz vectors (one per 5 s is ample for nodes ≤ 100 s apart). Snapping lets nearby places and reruns ask the same question. |
+| Window | From the first matched flyover's scoring window to the last one's (the whole recording with `--silence-whole`), ± 10 min | Silence and the curves read only that span. |
+| Conversion | GNSS altitude, else barometric + the aircraft's own median GNSS − baro offset, else + the median of every aircraft in the box and hour, else raw; jets dropped by the registry's type; then the store's own reduction (`encode_tracks`: spikes, smoothing, Hermite nodes) and `split_tracks` | The same trajectories as an ADSB.lol day, so both sources are read the same way. |
+| Cache | `<cache>/opensky/<key>.trk` (the store format; key: SHA-256 of the SQL), uploaded to the aircraft bucket (`opensky/`); an empty file for an empty window | A question is never asked twice, and a server OpenSky blocks reads what a home run fetched. |
+| Merge | By ICAO address: an aircraft ADSB.lol has keeps its segments; OpenSky adds only where ADSB.lol has none within 60 s | One flight never counted twice. |
+| Re-check | The search again at each place (± 1.5 km, start ± 15 s), with ADSB.lol alone and with the merged set. The answer stands if the same flights are found within 250 m of where ADSB.lol alone puts them, at ≥ 90% of the score. Else **dropped**, or **moved** if the same flights still score ≥ 50% nearby; **changed** if other flights now win at the place (and did not with ADSB.lol alone). Dropped answers leave the ranking, changed and moved ones are replaced, and the verdict is judged again | The same corridors, one clock, silence and curves as the main search, on the same terms with and without OpenSky: any difference is OpenSky's. In the synthetic test an aircraft 0.95 km from the listener between the flyovers, unheard, drops the true place (score 68 → 22, 1.5 km away). |
+| Report | `opensky`: status, per place the outcome, the reason, segment counts, and OpenSky's aircraft within the silence range (closest slant range, time, whether only OpenSky had it, whether it was unheard) | Which aircraft came only from OpenSky, and what they changed. |
+
+Without credentials and without a cached answer, or when OpenSky fails, nothing changes
+and the report says so (`not configured`, `unreachable`). Edited files (the per-clip search) are
+not checked yet.
 
 ## 4. Terrain (`terrain.cpp`)
 
@@ -309,7 +331,8 @@ look-alike pairs; the aircraft then turn the hum's continent into a place.
 ## Limits
 
 - **ADS-B only**: aircraft without ADS-B (or outside ADSB.lol's coverage) cannot be
-  matched; the silence test assumes the network saw every low aircraft.
+  matched; the silence test assumes the network saw every low aircraft (OpenSky, when
+  checked, adds its own receivers' aircraft at the best places only).
 - **A time window is needed**: a day (two or more flyovers) or a few seconds (one).
 - **Edited files**: one clock per clip, one place for all; a clip with a single flyover
   needs its own hum second, and the camera is assumed not to have moved between clips.

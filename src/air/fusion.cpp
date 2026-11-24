@@ -385,6 +385,15 @@ AircraftStage run_aircraft(const std::string& path, const std::vector<Hypothesis
     }
     std::cerr << "aircraft: " << h.label << std::endl;
     hr.result = search_hypothesis(spec, st.detection.events, h, *box, STORE_TRACKS, terrain, true, log_line);
+    if (o.opensky.enabled) {
+      SearchOptions so;
+      so.start_min = h.start_min, so.start_max = h.start_max, so.box = *box, so.min_events = h.min_events;
+      opensky::check(*hr.result, spec, st.detection.events, so, STORE_TRACKS, terrain, o.opensky);
+      if (!h.area.empty()) {
+        std::erase_if(hr.result->candidates, [&](const Candidate& c) { return !area_contains(h.area, c.lat, c.lon); });
+        judge(*hr.result);
+      }
+    }
     st.tried.push_back(std::move(hr));
   }
   st.best = pick_best(st.tried);

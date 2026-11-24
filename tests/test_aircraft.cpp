@@ -17,6 +17,7 @@
 #include "air/events.hpp"
 #include "air/fusion.hpp"
 #include "air/geodesy.hpp"
+#include "air/opensky.hpp"
 #include "air/ridge.hpp"
 #include "air/search.hpp"
 #include "air/spectrogram.hpp"
@@ -850,4 +851,324 @@ TEST(AircraftJudge, SingleFlyoverNeedsAGoodFitForModerate) {
   };
   EXPECT_EQ(one(0.61), AirLevel::Weak);
   EXPECT_EQ(one(0.95), AirLevel::Moderate);
+}
+
+// ---------------------------------------------------------------- OpenSky (no network)
+
+TEST(AircraftOpenSky, WindowsAndQueriesFollowTheRules) {
+  // 20:50 .. 22:03:20 UTC on 2026-09-08 over a small box: one query per hour partition,
+  // the window snapped to 10 minutes inside it, the box to 0.1 degrees.
+  const auto ws = opensky::windows(1788900600, 1788905000, Bbox{-73.55, 40.83, -73.47, 40.91});
+  ASSERT_EQ(ws.size(), 3u);
+  EXPECT_EQ(ws[0].hour, 1788897600);
+  EXPECT_EQ(ws[0].t0, 1788900600);
+  EXPECT_EQ(ws[0].t1, 1788901199);
+  EXPECT_EQ(ws[1].hour, 1788901200);
+  EXPECT_EQ(ws[1].t0, 1788901200);
+  EXPECT_EQ(ws[1].t1, 1788904799);
+  EXPECT_EQ(ws[2].hour, 1788904800);
+  EXPECT_EQ(ws[2].t1, 1788905400);
+  EXPECT_NEAR(ws[0].box.west, -73.6, 1e-9);
+  EXPECT_NEAR(ws[0].box.east, -73.4, 1e-9);
+  EXPECT_NEAR(ws[0].box.south, 40.8, 1e-9);
+  EXPECT_NEAR(ws[0].box.north, 41.0, 1e-9);
+  const std::string q = opensky::sql(ws[0]);
+  EXPECT_NE(q.find("FROM state_vectors_data4"), std::string::npos);
+  EXPECT_NE(q.find("WHERE hour = 1788897600"), std::string::npos) << q;
+  EXPECT_NE(q.find("time BETWEEN 1788900600 AND 1788901199"), std::string::npos) << q;
+  EXPECT_NE(q.find("lat BETWEEN 40.8 AND 41.0"), std::string::npos) << q;
+  EXPECT_NE(q.find("lon BETWEEN -73.6 AND -73.4"), std::string::npos) << q;
+  EXPECT_NE(q.find("time - lastcontact <= 15"), std::string::npos);
+  EXPECT_NE(q.find("LIMIT"), std::string::npos);
+  EXPECT_EQ(q.find('*'), std::string::npos) << "never every column";
+  EXPECT_EQ(q.find("serials"), std::string::npos);
+  // One key per question, the same for the same question.
+  EXPECT_EQ(opensky::cache_key(ws[0]).size(), 32u);
+  EXPECT_EQ(opensky::cache_key(ws[0]), opensky::cache_key(opensky::windows(1788900600, 1788901100, Bbox{-73.55, 40.83, -73.47, 40.91})[0]));
+  EXPECT_NE(opensky::cache_key(ws[0]), opensky::cache_key(ws[1]));
+  // A whole day: 24 hours of twelve 15-degree bands; a split box keeps its exact edges.
+  const auto day = opensky::day_windows("2026-09-08");
+  ASSERT_EQ(day.size(), 24u * 12u);
+  EXPECT_EQ(day.front().hour, 1788825600);
+  EXPECT_EQ(day.front().t1, 1788825600 + 3599);
+  EXPECT_DOUBLE_EQ(day.front().box.south, -90);
+  EXPECT_DOUBLE_EQ(day[11].box.north, 90);
+  opensky::Window split = day[0];
+  split.box = {-180, 11.25, -157.5, 15};
+  EXPECT_NE(opensky::sql(split, 1000).find("lat BETWEEN 11.25 AND 15.0"), std::string::npos) << opensky::sql(split, 1000);
+  EXPECT_NE(opensky::sql(split, 1000).find("LIMIT 1000"), std::string::npos);
+  EXPECT_EQ(opensky::chunk_name(split), "00_11.25_-180.0_15.0_-157.5.trk");
+  // A window inside one hour is one query.
+  EXPECT_EQ(opensky::windows(1788901300, 1788902000, Bbox{8.5, 50.0, 8.6, 50.1}).size(), 1u);
+}
+
+TEST(AircraftOpenSky, TokenUserIsTheTokens) {
+  EXPECT_EQ(opensky::token_user("eyJhbGciOiJub25lIn0.eyJwcmVmZXJyZWRfdXNlcm5hbWUiOiJyZXNlYXJjaGVyIiwiZXhwIjoxfQ.sig"), "researcher");
+  EXPECT_EQ(opensky::token_user("not a token"), "");
+  EXPECT_EQ(opensky::token_user("a.b.c"), "");
+}
+
+TEST(AircraftOpenSky, RowsBecomeTracksWithCorrectedAltitudes) {
+  seed_tables();  // registry: A00001 C172, A00002 E55P (a jet), A00003 PC12
+  const std::vector<std::string> cols = {"time", "icao24", "lat", "lon", "velocity", "heading", "vertrate", "baroaltitude", "geoaltitude"};
+  auto rows = parse_json(R"([
+    [1000, "a00001", 40.00, -100.00, 50.0, 90.0, 0.0, 600.0, 650.0],
+    [1005, "a00001", 40.00, -99.997, 50.0, 90.0, 0.0, 600.0, 650.0],
+    [1005, "a00001", 40.00, -99.997, 50.0, 90.0, 0.0, 600.0, 650.0],
+    [1010, "a00001", 40.00, -99.994, 50.0, 90.0, 0.0, 610.0, 660.0],
+    [1015, "a00001", 40.00, -99.991, 50.0, 90.0, 0.0, 610.0, 660.0],
+    [1020, "a00001", 40.00, -99.988, 50.0, 90.0, null, 620.0, null],
+    [1000, "a00003", 40.10, -100.00, 80.0, 0.0, 1.0, 900.0, null],
+    [1005, "a00003", 40.1036, -100.00, 80.0, 0.0, 1.0, 905.0, null],
+    [1010, "a00003", null, -100.00, 80.0, 0.0, 1.0, 910.0, null],
+    [1000, "a00002", 40.20, -100.00, 90.0, 0.0, 0.0, 800.0, 850.0],
+    [1000, "zzzzzz", 40.30, -100.00, 90.0, 0.0, 0.0, 800.0, 850.0],
+    [1000, "a00004", 40.40, -100.00, 90.0, 0.0, 0.0, null, null]
+  ])").as_array();
+  auto tr = opensky::tracks_from_rows(cols, rows);
+  ASSERT_EQ(tr.size(), 2u);  // the jet, the bad address and the altitude-less fix gone
+  const Track& a = tr[0].icao == 0xa00001 ? tr[0] : tr[1];
+  const Track& c = tr[0].icao == 0xa00001 ? tr[1] : tr[0];
+  EXPECT_EQ(a.type, "C172");
+  EXPECT_EQ(a.info.engine, EngineType::Piston);
+  ASSERT_EQ(a.fixes.size(), 5u);  // the repeated second once
+  EXPECT_FLOAT_EQ(a.fixes[0].alt_m, 650.0f);
+  EXPECT_EQ(a.fixes[0].alt_src, AltSource::Geometric);
+  EXPECT_FLOAT_EQ(a.fixes[4].alt_m, 670.0f);  // barometric + its own median offset (50 m)
+  EXPECT_EQ(a.fixes[4].alt_src, AltSource::BaroTrack);
+  EXPECT_TRUE(std::isnan(a.fixes[4].vrate));
+  EXPECT_FLOAT_EQ(a.fixes[0].gs, 50.0f);
+  EXPECT_FLOAT_EQ(a.fixes[0].track, 90.0f);
+  EXPECT_EQ(c.type, "PC12");
+  ASSERT_EQ(c.fixes.size(), 2u);  // the fix without a position dropped
+  EXPECT_FLOAT_EQ(c.fixes[0].alt_m, 950.0f);  // + the median offset of every aircraft here
+  EXPECT_EQ(c.fixes[0].alt_src, AltSource::BaroRegion);
+  EXPECT_EQ(opensky::tracks_from_rows(cols, rows, true).size(), 3u);  // jets on request
+  EXPECT_THROW(opensky::tracks_from_rows({"time", "lat"}, rows), std::runtime_error);
+}
+
+TEST(AircraftOpenSky, StateVectorsBecomeTheStoresNodes) {
+  // A steady leg at one vector per 5 s: a node every ~100 s, on the same curve.
+  const Enu f(40.0, -100.0, 0.0);
+  Straight L{f, {0, 0, 900}, {70, 20, 0}, 1000};
+  const Track raw = track_of(L, 0xa00001, "C172", 1000, 1600, 5.0);
+  const auto nodes = opensky::to_nodes({raw});
+  ASSERT_EQ(nodes.size(), 1u);
+  EXPECT_LT(nodes[0].fixes.size(), 12u);
+  EXPECT_GE(nodes[0].fixes.size(), 2u);
+  EXPECT_EQ(nodes[0].icao, 0xa00001u);
+  EXPECT_EQ(nodes[0].type, "C172");
+  const Path p = path_of(nodes[0]);
+  for (auto& x : raw.fixes) {
+    if (x.t < p.t0() || x.t > p.t1()) continue;
+    Vec3 q, v;
+    p.state(x.t, q, v);
+    EXPECT_LT((q - ecef(x.lat, x.lon, x.alt_m)).norm(), 30.0) << x.t;
+  }
+  EXPECT_TRUE(opensky::to_nodes({}).empty());
+}
+
+TEST(AircraftOpenSky, MergeCountsAFlightOnce) {
+  const Enu f(40.0, -100.0, 0.0);
+  Straight L{f, {0, 0, 900}, {70, 0, 0}, 0};
+  Straight M{f, {0, 5000, 700}, {0, 60, 0}, 0};
+  // ADSB.lol has aircraft 1 for [0, 600]; OpenSky has it for [0, 1200] and aircraft 2.
+  const auto adsb = split_tracks({track_of(L, 1, "C172", 0, 600, 10.0)});
+  const std::vector<Track> os = {track_of(L, 1, "", 0, 1200, 5.0), track_of(M, 2, "PC12", 0, 300, 5.0)};
+  const auto m = opensky::merge(adsb, os);
+  EXPECT_EQ(m.from_adsb, 1u);
+  EXPECT_EQ(m.only_opensky, (std::set<std::uint32_t>{2}));
+  EXPECT_EQ(m.gap_filled, (std::set<std::uint32_t>{1}));
+  ASSERT_EQ(m.segments.size(), 3u);
+  for (std::size_t i = 1; i < m.segments.size(); ++i) {
+    const Track& s = m.segments[i];
+    if (s.icao != 1) continue;
+    EXPECT_GT(s.fixes.front().t, 600 + opensky::GAP_S) << "no overlap with ADSB.lol's own segment";
+    EXPECT_EQ(s.type, "C172") << "the gap takes ADSB.lol's identity";
+  }
+  // OpenSky's copy of a flight ADSB.lol covers adds nothing.
+  const auto same = opensky::merge(adsb, {track_of(L, 1, "C172", 0, 600, 5.0)});
+  EXPECT_EQ(same.segments.size(), 1u);
+  EXPECT_TRUE(same.only_opensky.empty() && same.gap_filled.empty());
+}
+
+TEST(AircraftOpenSky, AnswersComeFromTheCacheWithoutCredentials) {
+  const std::string old_cache = env("GEOLOC_CACHE");
+  const fs::path dir = test::make_temp_dir("opensky");
+  test::use_cache(dir);
+  ::unsetenv("OPENSKY_USERNAME");
+  ::unsetenv("OPENSKY_PASSWORD");
+  ::unsetenv("GEOLOC_AIRPLANE_BUCKET");
+  const auto w = opensky::windows(1788900600, 1788901100, Bbox{8.5, 50.0, 8.6, 50.1})[0];
+  EXPECT_THROW(opensky::fetch(w), opensky::NotConfigured);
+  const Enu f(50.05, 8.55, 0.0);
+  Straight L{f, {0, 0, 900}, {70, 0, 0}, double(w.t0)};
+  const fs::path p = store::cache_dir() / "opensky" / (opensky::cache_key(w) + ".trk");
+  fs::create_directories(p.parent_path());
+  atomic_write(p, encode_tracks({track_of(L, 7, "C172", double(w.t0), double(w.t0) + 300, 5.0)}));
+  std::string src;
+  const auto got = opensky::fetch(w, &src);
+  EXPECT_EQ(src, "cache");
+  ASSERT_EQ(got.size(), 1u);
+  EXPECT_EQ(got[0].icao, 7u);
+  atomic_write(p, "");  // a window that held no aircraft
+  EXPECT_TRUE(opensky::fetch(w).empty());
+  if (old_cache.empty()) ::unsetenv("GEOLOC_CACHE");
+  else test::use_cache(old_cache);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(AircraftOpenSky, OffOrUnconfiguredLeavesTheAnswerAlone) {
+  ::unsetenv("OPENSKY_USERNAME");
+  ::unsetenv("OPENSKY_PASSWORD");
+  ::unsetenv("GEOLOC_AIRPLANE_BUCKET");
+  SearchResult r;
+  Candidate c;
+  c.lat = 40, c.lon = -100, c.start_utc = 1767261600, c.score = 9, c.combo = "0:a00010";
+  r.candidates.push_back(c);
+  judge(r);
+  const auto before = r.reasons;
+  Spectrogram spec;
+  Terrain terrain(false);
+  const TrackSource none = [](const Bbox&, double, double) { return std::vector<Track>{}; };
+  SearchOptions so;
+  opensky::Options o;  // off
+  opensky::check(r, spec, {}, so, none, terrain, o);
+  EXPECT_FALSE(r.opensky);
+  o.enabled = true;
+  o.source = [](const opensky::Window&) -> std::vector<Track> { throw opensky::NotConfigured("no credentials"); };
+  opensky::check(r, spec, {}, so, none, terrain, o);
+  ASSERT_TRUE(r.opensky);
+  EXPECT_EQ(r.opensky->status, "not configured");
+  EXPECT_EQ(r.reasons, before);
+  ASSERT_EQ(r.candidates.size(), 1u);
+  EXPECT_EQ(r.candidates[0].combo, "0:a00010");
+  o.source = [](const opensky::Window&) -> std::vector<Track> { throw std::runtime_error("connection reset"); };
+  opensky::check(r, spec, {}, so, none, terrain, o);
+  EXPECT_EQ(r.opensky->status, "unreachable");
+  EXPECT_NE(r.opensky->note.find("connection reset"), std::string::npos);
+  EXPECT_EQ(r.reasons, before);
+  EXPECT_EQ(r.candidates.size(), 1u);
+}
+
+TEST(AircraftOpenSky, AnUnheardAircraftOnlyOpenSkySawDropsThePlace) {
+  // The scene of FindsTheListenerFromTwoFlyovers. ADSB.lol has the two heard aircraft;
+  // OpenSky also has a third passing 0.9 km from the listener between the flyovers,
+  // when nothing was heard, and its own copy of one heard aircraft.
+  const double lat0 = 40.0, lon0 = -100.0, start = 1767261600.0;
+  const Enu f(lat0, lon0, 0.0);
+  const double tA = start + 300, tB = start + 900;
+  Straight A{f, {0, 1800, 1200}, {120, 0, 0}, tA - std::hypot(1800.0, 1200.0 - 2.0) / SOUND_SPEED};
+  Straight B{f, {900, 0, 800}, {0, -90, 0}, tB - std::hypot(900.0, 800.0 - 2.0) / SOUND_SPEED};
+  Straight E{f, {800, 0, 500}, {0, 60, 0}, start + 600};
+  const std::vector<Track> adsb_tracks = {track_of(A, 0xa00010, "PC12", start - 400, start + 1600), track_of(B, 0xa00011, "C172", start - 400, start + 1600)};
+  const Vec3 o = ecef(lat0, lon0, 2.0);
+  auto x = render({{ecef_path(adsb_tracks[0]), {105.0, 210.0}}, {ecef_path(adsb_tracks[1]), {85.0}}}, o, start, 1200, 0.5, 1.0, 3);
+  auto spec = whitened_spectrogram(x);
+  auto det = detect_events(spec);
+  ASSERT_GE(det.events.size(), 2u);
+  Terrain terrain(false);
+  SearchOptions so;
+  so.start_min = start - 600, so.start_max = start + 600;
+  so.box = {lon0 - 0.1, lat0 - 0.08, lon0 + 0.1, lat0 + 0.08};
+  const BladePassTable table = BladePassTable::builtin();
+  so.blade_pass = &table;
+  const TrackSource adsb = [&](const Bbox&, double, double) { return split_tracks(adsb_tracks); };
+  const auto r0 = search(spec, det.events, split_tracks(adsb_tracks), terrain, so);
+  ASSERT_FALSE(r0.candidates.empty());
+  ASSERT_LT(haversine_m(r0.candidates[0].lat, r0.candidates[0].lon, lat0, lon0), 150.0);
+  const std::string combo = r0.candidates[0].combo;
+
+  opensky::Options oo;
+  oo.enabled = true, oo.places = 1;
+  int asked = 0;
+  // Nothing new in OpenSky: its copy of a heard aircraft, and an aircraft passing the
+  // listener 50 min in, inside the query's hour but outside the window searched (the
+  // flyovers' span +- 10 min), which ADSB.lol is not read for either. The answer stands.
+  Straight F{f, {500, 0, 400}, {0, 60, 0}, start + 3000};
+  oo.source = [&](const opensky::Window& w) {
+    ++asked;
+    EXPECT_LE(w.t1 - w.t0, 3599);
+    return std::vector<Track>{track_of(A, 0xa00010, "PC12", start - 400, start + 1600), track_of(F, 0xa00030, "C172", start + 2700, start + 3300)};
+  };
+  auto r1 = r0;
+  opensky::check(r1, spec, det.events, so, adsb, terrain, oo);
+  ASSERT_TRUE(r1.opensky);
+  std::printf("%s", opensky::render_report(*r1.opensky).c_str());
+  EXPECT_GE(asked, 1);
+  EXPECT_EQ(r1.opensky->status, "checked");
+  ASSERT_EQ(r1.opensky->places.size(), 1u);
+  EXPECT_EQ(r1.opensky->places[0].outcome, "unchanged");
+  EXPECT_EQ(r1.opensky->places[0].opensky_segments, 0u);
+  EXPECT_EQ(r1.candidates[0].combo, combo);
+
+  // The unheard aircraft: the place goes.
+  oo.source = [&](const opensky::Window&) {
+    return opensky::to_nodes({track_of(A, 0xa00010, "PC12", start - 400, start + 1600), track_of(E, 0xa00020, "C172", start - 400, start + 1600)});
+  };
+  auto r2 = r0;
+  opensky::check(r2, spec, det.events, so, adsb, terrain, oo);
+  ASSERT_TRUE(r2.opensky);
+  std::printf("%s", opensky::render_report(*r2.opensky).c_str());
+  ASSERT_EQ(r2.opensky->places.size(), 1u);
+  const auto& pc = r2.opensky->places[0];
+  EXPECT_EQ(pc.outcome, "dropped") << pc.detail;
+  EXPECT_EQ(r2.opensky->dropped, 1);
+  ASSERT_FALSE(pc.aircraft.empty());
+  EXPECT_EQ(pc.aircraft[0].flight, "a00020");
+  EXPECT_TRUE(pc.aircraft[0].only_opensky);
+  EXPECT_TRUE(pc.aircraft[0].unheard);
+  EXPECT_NEAR(pc.aircraft[0].closest_m, std::hypot(800.0, 498.0), 60.0);
+  for (auto& a : pc.aircraft) EXPECT_NE(a.flight, "a00010") << "a flight ADSB.lol has is not added again";
+  for (auto& c : r2.candidates) EXPECT_NE(c.combo, combo);
+  const auto j = result_json(r2, det.events);
+  ASSERT_TRUE(j.contains("opensky"));
+  EXPECT_EQ(j.at("opensky").at("places").as_array().at(0).at("outcome").as_string(), "dropped");
+}
+
+TEST(AircraftOpenSky, BuildsAWholeDayFromItsBandHours) {
+  // Every band-hour already cached (as an interrupted run leaves them): the day is built
+  // into an ordinary store without a query, an aircraft crossing an hour kept as one.
+  seed_tables();
+  (void)AircraftDb::get(), (void)TypeDb::get();
+  const std::string old_cache = env("GEOLOC_CACHE");
+  const fs::path dir = test::make_temp_dir("opensky-day");
+  test::use_cache(dir);
+  ::unsetenv("OPENSKY_USERNAME");
+  ::unsetenv("OPENSKY_PASSWORD");
+  ::unsetenv("GEOLOC_AIRPLANE_BUCKET");
+  const std::string day = "2025-06-01";
+  EXPECT_THROW(opensky::build_day(day), opensky::NotConfigured);
+  const auto ws = opensky::day_windows(day);
+  const fs::path cdir = store::cache_dir() / "opensky" / "days" / day;
+  fs::create_directories(cdir);
+  const double h10 = double(ws[10 * 12].hour);
+  const Enu f(40.0, -100.0, 0.0);
+  Straight L{f, {0, 0, 900}, {70, 0, 0}, h10 - 300};
+  for (auto& w : ws) {
+    std::string bytes;
+    if (w.box.south <= 40 && w.box.north > 40) {
+      const double a = double(w.t0), b = double(w.t1) + 1;
+      if (b > h10 - 300 && a < h10 + 300) bytes = encode_tracks({track_of(L, 0xa00001, "C172", std::max(a, h10 - 300), std::min(b - 5, h10 + 300), 5.0)});
+    }
+    atomic_write(cdir / opensky::chunk_name(w), bytes);
+  }
+  const auto st = opensky::build_day(day);
+  EXPECT_EQ(st.queries, 0);
+  EXPECT_EQ(st.cached, int(ws.size()));
+  EXPECT_EQ(st.aircraft, 1u);
+  EXPECT_TRUE(has_day(day));
+  EXPECT_TRUE(fs::exists(opensky::source_path(day)));
+  const auto got = split_tracks(load_tracks(h10 - 600, h10 + 600));
+  ASSERT_EQ(got.size(), 1u) << "one segment across the hour";
+  EXPECT_LT(got[0].fixes.front().t, h10 - 200);
+  EXPECT_GT(got[0].fixes.back().t, h10 + 200);
+  EXPECT_NO_THROW(opensky::build_day(day)) << "a day OpenSky built is rebuilt (from the cache)";
+  fs::remove(opensky::source_path(day));  // now it is as if ADSB.lol had it
+  EXPECT_THROW(opensky::build_day(day), std::runtime_error) << "never over an ADSB.lol day without --force";
+  if (old_cache.empty()) ::unsetenv("GEOLOC_CACHE");
+  else test::use_cache(old_cache);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
 }

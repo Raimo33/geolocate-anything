@@ -98,6 +98,28 @@ The colsto recording (`colsto_4CxVxuMVkMc`, YouTube 4CxVxuMVkMc) is not a livest
 `~/.cache/geolocate-anything/wild/colsto_4CxVxuMVkMc.webm` into `$EVAL_AUDIO` and write an
 `info.json` with that start to include it.
 
+## OpenSky check (2026-11-24)
+
+The aircraft cases (`run.sh dated|blind`) with the check on (`GEOLOC_OPENSKY=1`, best 5
+places, ±30 km), queried from a home connection, then again without credentials, reading
+the answers back from the aircraft bucket.
+
+| Recording | Checked | Outcome |
+|---|---|---|
+| Long Island security cam (dated) | 5 places, 10 hour windows (9 queries, 1 from the cache) | All 5 unchanged; the answer stays strong (N22NY + N93CQ, 80 m); OpenSky adds 1–4 segments per place, none within the silence range of the true place. From the bucket alone: the same. |
+| Aberdeen (dated) | – | No place to check (no answer, as without OpenSky) |
+| Älvsbyn, Canterbury (blind), Sunset Valley | – | Edited files: the per-clip search is not checked yet |
+
+With `GEOLOC_OPENSKY=0` the new binary's reports equal the previous binary's on all five
+cases, but for one Sunset Valley hypothesis whose segment count depends on which ADS-B days
+an earlier run left on disk (the same for both binaries run in the same state).
+
+Two faults the first live run showed, fixed before these results: OpenSky's query windows
+are snapped outwards (10 min), and its tracks were read over the whole snapped span while
+ADSB.lol's covered only the searched window, so a pass ADSB.lol was never asked for made
+another flight pair win (now both are clipped to the same window and box); and "changed"
+now needs a winner the search without OpenSky did not already have there.
+
 ## Aircraft detector on a labelled set: Livermore (2026-11-19)
 
 Praveen Pathak's Livermore passages ([Zenodo 10.5281/zenodo.23424278](https://zenodo.org/records/23424278),

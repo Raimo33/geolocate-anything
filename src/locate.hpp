@@ -73,6 +73,8 @@ struct AnalyzeOptions {
   std::optional<std::array<double, 4>> aircraft_box;  // west, south, east, north
   std::vector<std::array<double, 2>> area;             // forced (lon, lat) polygon for the aircraft answer
   bool aircraft_fetch = false;                         // download missing ADS-B days
+  bool opensky = false;                                // check the aircraft answers against OpenSky too
+  int opensky_places = 0;                              // best places checked (0: GEOLOC_OPENSKY_PLACES or 5)
 };
 
 Report analyze(const std::string& path, const AnalyzeOptions& o = {});

@@ -1,4 +1,5 @@
 #include "air/commands.hpp"
+#include "air/opensky.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -132,6 +133,10 @@ void register_commands(CLI::App& app, int& rc) {
   lo->add_flag("--known-types", lo_known_types, "only aircraft of known (non-jet) type");
   lo->add_flag("--no-type-prior", lo_no_prior, "do not drop aircraft whose type cannot make a flyover's tone (blade-pass table)");
   lo->add_flag("--offline", lo_offline, "no DEM downloads (heights fall back to the geoid)");
+  static bool lo_opensky = false;
+  static int lo_opensky_places = 0;
+  lo->add_flag("--opensky", lo_opensky, "check the best answers against OpenSky's history too (OPENSKY_USERNAME / OPENSKY_PASSWORD)");
+  lo->add_option("--opensky-places", lo_opensky_places, "best answers checked against OpenSky (default 5)");
   lo->add_option("--json", lo_json, "write a JSON report here");
   lo->callback([&rc] {
     auto au = audio::load_audio(lo_file, SPEC_RATE);
@@ -161,9 +166,12 @@ void register_commands(CLI::App& app, int& rc) {
     for (i64 d = floor_div(i64(t0), 86400) - 1; d <= floor_div(i64(t1), 86400); ++d) any_day |= ensure_day(iso_date(d * 86400));
     if (!any_day) std::printf("no ADS-B history stored for this window: run `geoloc aircraft fetch DAY`\n");
     Terrain terrain(!lo_offline);
-    auto res = search_regions(
-        spec, events, [](const Bbox& b, double a, double z) { return split_tracks(load_tracks(a, z, b)); }, terrain, so, lo_region,
-        [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); });
+    const TrackSource stored = [](const Bbox& b, double a, double z) { return split_tracks(load_tracks(a, z, b)); };
+    auto res = search_regions(spec, events, stored, terrain, so, lo_region, [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); });
+    auto oso = opensky::options_from_env();
+    if (lo_opensky) oso.enabled = true;
+    if (lo_opensky_places > 0) oso.places = lo_opensky_places;
+    opensky::check(res, spec, events, so, stored, terrain, oso);
     std::printf("%s", render_result(res, events).c_str());
     if (!lo_json.empty()) {
       json::array ea;
@@ -174,6 +182,74 @@ void register_commands(CLI::App& app, int& rc) {
       atomic_write(lo_json, dump(j, {.indent = 2}));
     }
     rc = res.level >= AirLevel::Moderate ? 0 : 2;
+  });
+
+  // aircraft gaps [FIRST..LAST]: days the history lacks
+  auto* ga = air->add_subcommand("gaps", "days missing from the ADS-B history (the bucket's, else this machine's), or holding almost nothing");
+  static std::string ga_range;
+  ga->add_option("range", ga_range, "FIRST..LAST (default: 2023-03-01 to yesterday)");
+  ga->callback([&rc] {
+    std::string a = "2023-03-01", b = iso_date(i64(now_seconds()) - 86400);
+    if (!ga_range.empty()) {
+      const auto dots = ga_range.find("..");
+      if (dots == std::string::npos) throw std::invalid_argument("range must be FIRST..LAST");
+      a = ga_range.substr(0, dots), b = ga_range.substr(dots + 2);
+    }
+    const auto ta = parse_iso_utc(a), tb = parse_iso_utc(b);
+    if (!ta || !tb) throw std::invalid_argument("range must be FIRST..LAST, YYYY-MM-DD");
+    std::set<std::string> held;
+    if (bucket::enabled()) held = bucket::days();
+    for (auto& d : stored_days()) held.insert(d);
+    int missing = 0, thin = 0;
+    for (i64 d = floor_div(i64(*ta), 86400); d <= floor_div(i64(*tb), 86400); ++d) {
+      const std::string day = iso_date(d * 86400);
+      if (!held.count(day)) {
+        std::printf("%s missing\n", day.c_str());
+        ++missing;
+      } else if (fs::exists(coverage_path(day)) && fs::file_size(coverage_path(day)) < 1000) {
+        std::printf("%s nearly empty (coverage %ju bytes)\n", day.c_str(), std::uintmax_t(fs::file_size(coverage_path(day))));
+        ++thin;
+      } else if (fs::exists(opensky::source_path(day))) {
+        std::printf("%s from OpenSky\n", day.c_str());
+      }
+    }
+    std::printf("%d missing, %d nearly empty\n", missing, thin);
+    rc = 0;
+  });
+
+  // aircraft opensky-day DAY...: fill a gap from OpenSky
+  auto* od = air->add_subcommand("opensky-day", "build days ADSB.lol lacks from OpenSky's history (OPENSKY_USERNAME / OPENSKY_PASSWORD), as ADSB.lol days");
+  static std::vector<std::string> od_days;
+  static bool od_push = false, od_force = false;
+  static double od_band = 15.0;
+  od->add_option("day", od_days, "UTC day(s), YYYY-MM-DD, or ranges FIRST..LAST")->required();
+  od->add_flag("--push", od_push, "upload each day to the aircraft bucket (GEOLOC_AIRPLANE_BUCKET)");
+  od->add_flag("--force", od_force, "build even when ADSB.lol has the day (here or in the bucket)");
+  od->add_option("--band", od_band, "latitude band per query, degrees");
+  od->callback([&rc] {
+    if (od_push && !bucket::enabled()) throw std::invalid_argument("--push needs GEOLOC_AIRPLANE_BUCKET");
+    std::vector<std::string> days;
+    for (auto& spec : od_days) {
+      const auto dots = spec.find("..");
+      const std::string a = spec.substr(0, dots), b = dots == std::string::npos ? a : spec.substr(dots + 2);
+      const auto ta = parse_iso_utc(a), tb = parse_iso_utc(b);
+      if (!ta || !tb || a.size() != 10 || b.size() != 10) throw std::invalid_argument("day must be YYYY-MM-DD or FIRST..LAST: " + spec);
+      for (i64 d = floor_div(i64(*ta), 86400); d <= floor_div(i64(*tb), 86400); ++d) days.push_back(iso_date(d * 86400));
+    }
+    rc = 0;
+    for (auto& day : days) {
+      opensky::DayOptions o;
+      o.push = od_push, o.force = od_force, o.band_deg = od_band;
+      try {
+        auto st = opensky::build_day(day, o, [](const std::string& m) { std::fprintf(stderr, "  %s\n", m.c_str()); });
+        std::printf("%s: %d queries (%d cached, %d splits), %zu state vectors, %zu non-jet aircraft, %zu nodes, %.1f MB stored, %.0f s%s\n", day.c_str(),
+                    st.queries, st.cached, st.splits, st.rows, st.aircraft, st.nodes, st.bytes / 1e6, st.seconds, od_push ? ", uploaded" : "");
+        std::fflush(stdout);
+      } catch (const std::exception& e) {
+        std::fprintf(stderr, "%s: %s\n", day.c_str(), e.what());
+        rc = 1;
+      }
+    }
   });
 
   // aircraft fetch DAY...

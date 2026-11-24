@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "air/events.hpp"
+#include "air/opensky.hpp"
 #include "air/search.hpp"
 #include "util/json.hpp"
 
@@ -46,6 +47,7 @@ struct AircraftOptions {
   bool fetch = false;       // download missing ADS-B days (~4 GB each)
   bool online = true;       // DEM tiles
   int max_days = 3;         // at most this many days fetched per run
+  opensky::Options opensky; // check the best places against OpenSky too (unedited files)
 };
 
 // What the dashboard shows of the best answer: each matched aircraft with its track

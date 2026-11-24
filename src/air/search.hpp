@@ -21,6 +21,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,10 @@
 #include "util/json.hpp"
 
 namespace geo::air {
+
+namespace opensky {
+struct Report;
+}
 
 struct SearchOptions {
   double start_min = NAN, start_max = NAN;  // window for the recording's first sample (epoch s)
@@ -113,6 +118,8 @@ struct SearchResult {
   double wall_tiles = 0, wall_subgrid = 0, wall_refine = 0;
   double cpu_silence = 0;                // part of cpu_corridors
   double wall_load = 0, wall_pieces = 0;  // loading tracks (search_regions), cutting them into pieces
+  // The best places checked against OpenSky's aircraft too (opensky.hpp), when asked.
+  std::shared_ptr<const opensky::Report> opensky;
 };
 
 SearchResult search(const Spectrogram& spec, const std::vector<Event>& events, const std::vector<Track>& segments, Terrain& terrain,

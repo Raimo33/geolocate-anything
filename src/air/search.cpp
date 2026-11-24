@@ -1,4 +1,5 @@
 #include "air/search.hpp"
+#include "air/opensky.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -1233,7 +1234,7 @@ json::object result_json(const SearchResult& r, const std::vector<Event>& events
   json::array reasons;
   for (auto& s : r.reasons) reasons.push_back(json::value(s));
   (void)events;
-  return {{"level", air_level_name(r.level)},
+  json::object out{{"level", air_level_name(r.level)},
           {"reasons", reasons},
           {"events_used", used},
           {"candidates", cands},
@@ -1242,6 +1243,8 @@ json::object result_json(const SearchResult& r, const std::vector<Event>& events
                         {"type_pairs", r.type_pairs}, {"type_pruned_pairs", r.type_pruned_pairs}, {"type_pruned_segments", r.type_pruned_segments}}},
           {"terrain_complete", r.terrain_complete},
           {"seconds", r.seconds}};
+  if (r.opensky) out["opensky"] = opensky::report_json(*r.opensky);
+  return out;
 }
 
 std::string render_result(const SearchResult& r, const std::vector<Event>& events) {
@@ -1267,6 +1270,7 @@ std::string render_result(const SearchResult& r, const std::vector<Event>& event
     std::snprintf(b, sizeof b, "  pair-first: %zu of %zu pieces rasterized (pairing %.0f cpu-s)\n", r.pair_kept, r.pair_pieces, r.cpu_pairs);
     out += b;
   }
+  if (r.opensky) out += opensky::render_report(*r.opensky);
   for (std::size_t i = 0; i < r.candidates.size() && i < 10; ++i) {
     auto& c = r.candidates[i];
     std::snprintf(b, sizeof b, "  #%zu  %.5f, %.5f  ground %.0f m  start %s  score %.1f\n", i + 1, c.lat, c.lon, c.ground_m, fmt_utc(c.start_utc).c_str(),

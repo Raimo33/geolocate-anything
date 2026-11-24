@@ -333,6 +333,11 @@ int main(int argc, char** argv) {
   loc->add_option("--aircraft-bbox", air_bbox, "area for the aircraft search without a hum match: WEST,SOUTH,EAST,NORTH");
   loc->add_option("--area", loc_area, "force the aircraft answer inside this polygon: LON,LAT;LON,LAT;...");
   loc->add_flag("--aircraft-fetch", air_fetch, "download missing ADS-B days (~4 GB each)");
+  bool loc_opensky = false;
+  int loc_opensky_places = 0;
+  loc->add_flag("--opensky", loc_opensky,
+                "check the best aircraft answers against OpenSky's history too (OPENSKY_USERNAME / OPENSKY_PASSWORD, or answers cached in the bucket)");
+  loc->add_option("--opensky-places", loc_opensky_places, "best aircraft answers checked against OpenSky (default 5)");
   loc->add_flag("--web-json", web_json, "print the dashboard's JSON on stdout (used by `serve`)")->group("");
   loc->add_option("--display-name", loc_display)->group("");
   loc->add_option("--size", loc_size)->group("");
@@ -346,6 +351,7 @@ int main(int argc, char** argv) {
     o.aircraft = air_mode == "on" ? locate::AnalyzeOptions::Aircraft::On : air_mode == "off" ? locate::AnalyzeOptions::Aircraft::Off
                                                                                            : locate::AnalyzeOptions::Aircraft::Auto;
     o.aircraft_fetch = air_fetch;
+    o.opensky = loc_opensky, o.opensky_places = loc_opensky_places;
     if (!air_bbox.empty()) {
       std::array<double, 4> b{};
       if (std::sscanf(air_bbox.c_str(), "%lf,%lf,%lf,%lf", &b[0], &b[1], &b[2], &b[3]) != 4)

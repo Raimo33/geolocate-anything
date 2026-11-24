@@ -393,6 +393,9 @@ static void add_aircraft(Report& rep, const AnalyzeOptions& o) {
   ao.area = o.area;
   ao.fetch = fetch;
   if (!o.aircraft_fetch && fetch) ao.max_days = std::max(1, std::atoi(env("GEOLOC_AIRPLANE_MAX_FETCH", "1").c_str()));
+  ao.opensky = air::opensky::options_from_env();
+  if (o.opensky) ao.opensky.enabled = true;
+  if (o.opensky_places > 0) ao.opensky.places = o.opensky_places;
   rep.aircraft = air::run_aircraft(rep.path, hyps, ao);
   if (hyps.empty()) rep.aircraft->notes.push_back("no time to search at: no hum candidate and no date window");
   const auto* r = rep.aircraft->best_result();

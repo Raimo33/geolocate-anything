@@ -7,13 +7,16 @@
 //   GEOLOC_AIRPLANE_BUCKET, GEOLOC_AIRPLANE_ACCESS_KEY_ID, GEOLOC_AIRPLANE_SECRET_ACCESS_KEY;
 //   endpoint and region shared with the grid bucket: GEOLOC_S3_ENDPOINT_URL, GEOLOC_S3_REGION.
 //
-// Objects: adsb/<YYYY-MM-DD>.trk (the day's store) and adsb/<YYYY-MM-DD>.cov (coverage).
+// Objects: adsb/<YYYY-MM-DD>.trk (the day's store) and adsb/<YYYY-MM-DD>.cov (coverage);
+// opensky/<key>.trk, OpenSky's answers to the aircraft check (opensky.hpp).
 #pragma once
 
 #include <functional>
 #include <set>
 #include <string>
 #include <vector>
+
+#include "util/files.hpp"
 
 namespace geo::air::bucket {
 
@@ -28,5 +31,9 @@ int pull_coverage(std::function<void(int, int)> progress = {});
 // Uploads local days (all when `days` is empty): every one missing in the bucket or
 // different there; returns the days uploaded.
 int push(const std::vector<std::string>& days = {});
+
+// Any object: downloaded to dst (false when the bucket has no such key), or uploaded.
+bool get_object(const std::string& key, const fs::path& dst);
+void put_object(const std::string& key, const fs::path& src);
 
 }  // namespace geo::air::bucket

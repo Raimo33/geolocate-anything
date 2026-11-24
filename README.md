@@ -47,6 +47,11 @@ flyovers in the recording, then searches ADS-B history (ADSB.lol) for the place 
 the right aircraft, at the right distance and speed, at the right moments, and no other in
 between. On the recording that inspired it, the answer lands within 160 m of the true spot.
 
+Optionally (`--opensky`), the best answers are checked against
+[The OpenSky Network](https://opensky-network.org)'s history too, a second receiver
+network: an aircraft only OpenSky saw can rule a place out. Days ADSB.lol has no archive
+for are built from OpenSky ([setup](docs/usage.md#opensky); non-commercial use only).
+
 Limits: only aircraft with ADS-B coverage, jets excluded; it needs a time window (a day for
 two or more flyovers, the hum's second for one).
 
@@ -84,3 +89,8 @@ For the command-line interface, environment variables and building from source, 
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+Data: ADS-B history from [ADSB.lol](https://adsb.lol) (ODbL). The optional OpenSky check uses
+[The OpenSky Network](https://opensky-network.org), for non-commercial research only:
+Schäfer, Strohmeier, Lenders, Martinovic and Wilhelm, "Bringing up OpenSky: A large-scale
+ADS-B sensor network for research", IPSN 2014.
