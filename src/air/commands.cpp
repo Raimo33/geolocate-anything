@@ -286,9 +286,12 @@ void register_commands(CLI::App& app, int& rc) {
     if (!opensky::has_credentials()) throw std::invalid_argument("needs OPENSKY_USERNAME / OPENSKY_PASSWORD");
     for (;;) {
       const int n = opensky::work_queue([](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); });
-      std::printf("%d request(s) answered\n", n);
+      if (ow_every <= 0) {
+        std::printf("%d request(s) answered\n", n);
+        break;
+      }
+      std::printf("%d request(s) answered; looking again at %s\n", n, iso(now_seconds() + ow_every).c_str());
       std::fflush(stdout);
-      if (ow_every <= 0) break;
       std::this_thread::sleep_for(std::chrono::duration<double>(ow_every));
     }
     rc = 0;
