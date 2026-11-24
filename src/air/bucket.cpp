@@ -95,6 +95,7 @@ bool pull_day(const std::string& day) {
     std::cerr << "downloading ADS-B day " << day << " from the bucket" << std::endl;
     found = co_await get(http, b, PREFIX + day + ".trk", day_path(day));
     if (found && !fs::exists(coverage_path(day))) co_await get(http, b, PREFIX + day + ".cov", coverage_path(day));
+    if (found) co_await get(http, b, PREFIX + day + ".source", adsb_dir() / (day + ".source"));  // a day built from OpenSky
   });
   if (!found) return false;
   mark_used(day);
@@ -165,6 +166,45 @@ void put_object(const std::string& key, const fs::path& src) {
   net::run_sync_void([&](asio::io_context& io) -> asio::awaitable<void> {
     net::Http http(io);
     co_await put(http, b, key, src);
+  });
+}
+
+void delete_object(const std::string& key) {
+  const auto b = config();
+  net::run_sync_void([&](asio::io_context& io) -> asio::awaitable<void> {
+    net::Http http(io);
+    auto rq = net::s3::signed_request(b, net::s3::object_url(b, key));
+    rq.method = "DELETE";
+    auto r = co_await http.fetch(std::move(rq));
+    if (!r.ok() && r.status != 404) throw std::runtime_error("delete of " + key + " failed: " + fail(r));
+  });
+}
+
+std::map<std::string, std::string> list_keys(const std::string& prefix) {
+  const auto b = config();
+  return net::run_sync<std::map<std::string, std::string>>([&](asio::io_context& io) -> asio::awaitable<std::map<std::string, std::string>> {
+    net::Http http(io);
+    co_return co_await net::s3::list(http, b, prefix);
+  });
+}
+
+std::set<std::string> get_objects(const std::vector<std::pair<std::string, fs::path>>& items) {
+  const auto b = config();
+  std::set<std::string> found;
+  net::run_sync_void([&](asio::io_context& io) -> asio::awaitable<void> {
+    net::Http http(io);
+    co_await net::parallel_for(items, 16, [&](const std::pair<std::string, fs::path>& it) -> asio::awaitable<void> {
+      if (co_await get(http, b, it.first, it.second)) found.insert(it.first);
+    });
+  });
+  return found;
+}
+
+void put_objects(const std::vector<std::pair<std::string, fs::path>>& items) {
+  const auto b = config();
+  net::run_sync_void([&](asio::io_context& io) -> asio::awaitable<void> {
+    net::Http http(io);
+    co_await net::parallel_for(items, 16, [&](const std::pair<std::string, fs::path>& it) -> asio::awaitable<void> { co_await put(http, b, it.first, it.second); });
   });
 }
 

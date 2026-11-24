@@ -164,6 +164,7 @@ std::string ensure_days(const Hypothesis& h, double duration_s, const AircraftOp
   std::vector<std::string> missing;
   for (auto& d : days_of(h.start_min - 60, h.start_max + duration_s + 60))
     if (!ensure_day(d)) missing.push_back(d);
+  ensure_day(iso_date(i64(std::floor(h.start_min - 60)) - 86400));  // load_tracks reads the day before too (traces across midnight); optional
   for (auto it = missing.begin(); it != missing.end() && o.fetch && fetched < o.max_days;) {
     try {
       std::cerr << "fetching ADS-B history for " << *it << std::endl;
@@ -345,6 +346,15 @@ void refine_shared(SharedPlace& sp, const std::vector<ClipInput>& clips, std::ve
 
 const SpanTrackSource STORE_TRACKS = [](const Bbox& b, double t0, double t1) { return split_tracks(load_tracks(t0, t1, b)); };
 void log_line(const std::string& m) { std::cerr << "  " << m << std::endl; }
+// With OpenSky on, the searches read ADSB.lol and the OpenSky tiles here (fetched from
+// the bucket first, never queried: the check asks OpenSky for its own places).
+const SpanTrackSource STORE_AND_TILES = opensky::with_tiles(STORE_TRACKS);
+std::shared_ptr<opensky::TileStats> tiles_for_search(const Bbox& box, double t0, double t1, const opensky::Options& o) {
+  if (!o.enabled) return nullptr;
+  auto st = std::make_shared<opensky::TileStats>(opensky::prefetch(box, t0, t1, o, false));
+  log_line(opensky::describe(*st));
+  return st;
+}
 
 }  // namespace
 
@@ -384,11 +394,13 @@ AircraftStage run_aircraft(const std::string& path, const std::vector<Hypothesis
       continue;
     }
     std::cerr << "aircraft: " << h.label << std::endl;
-    hr.result = search_hypothesis(spec, st.detection.events, h, *box, STORE_TRACKS, terrain, true, log_line);
-    if (o.opensky.enabled) {
+    opensky::Options oso = o.opensky;
+    oso.tiles = tiles_for_search(*box, h.start_min - 600, h.start_max + spec.duration_s + 600, oso);
+    hr.result = search_hypothesis(spec, st.detection.events, h, *box, oso.enabled ? STORE_AND_TILES : STORE_TRACKS, terrain, true, log_line);
+    if (oso.enabled) {
       SearchOptions so;
       so.start_min = h.start_min, so.start_max = h.start_max, so.box = *box, so.min_events = h.min_events;
-      opensky::check(*hr.result, spec, st.detection.events, so, STORE_TRACKS, terrain, o.opensky);
+      opensky::check(*hr.result, spec, st.detection.events, so, STORE_TRACKS, terrain, oso);
       if (!h.area.empty()) {
         std::erase_if(hr.result->candidates, [&](const Candidate& c) { return !area_contains(h.area, c.lat, c.lon); });
         judge(*hr.result);
@@ -591,7 +603,13 @@ AircraftStage run_aircraft_clips(const std::string& path, const std::vector<Clip
   au.samples.shrink_to_fit();
   Terrain terrain(o.online);
   int fetched = 0;
-  auto j = search_clips(in, STORE_TRACKS, terrain, [&](const Hypothesis& h, double dur) { return ensure_days(h, dur, o, fetched); }, log_line);
+  auto j = search_clips(in, o.opensky.enabled ? STORE_AND_TILES : STORE_TRACKS, terrain,
+                        [&](const Hypothesis& h, double dur) {
+                          auto note = ensure_days(h, dur, o, fetched);
+                          if (note.empty() && h.box) tiles_for_search(*h.box, h.start_min - 600, h.start_max + dur + 600, o.opensky);
+                          return note;
+                        },
+                        log_line);
   for (std::size_t i = 0; i < spans.size(); ++i)
     if (!pre[i].empty()) j.clips[i].note = pre[i];
   return clips_stage(spans, in, std::move(j));

@@ -3,10 +3,12 @@
 
 #include <CLI/CLI.hpp>
 
+#include <chrono>
 #include <cstdio>
 #include <cmath>
 #include <iostream>
 #include <set>
+#include <thread>
 
 #include "air/adsb.hpp"
 #include "air/bucket.hpp"
@@ -167,10 +169,15 @@ void register_commands(CLI::App& app, int& rc) {
     if (!any_day) std::printf("no ADS-B history stored for this window: run `geoloc aircraft fetch DAY`\n");
     Terrain terrain(!lo_offline);
     const TrackSource stored = [](const Bbox& b, double a, double z) { return split_tracks(load_tracks(a, z, b)); };
-    auto res = search_regions(spec, events, stored, terrain, so, lo_region, [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); });
     auto oso = opensky::options_from_env();
     if (lo_opensky) oso.enabled = true;
     if (lo_opensky_places > 0) oso.places = lo_opensky_places;
+    if (oso.enabled) {  // OpenSky's tiles here or in the bucket are searched with ADSB.lol
+      oso.tiles = std::make_shared<opensky::TileStats>(opensky::prefetch(so.box, t0, t1, oso, false));
+      std::fprintf(stderr, "%s\n", opensky::describe(*oso.tiles).c_str());
+    }
+    auto res = search_regions(spec, events, oso.enabled ? opensky::with_tiles(stored) : stored, terrain, so, lo_region,
+                              [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); });
     opensky::check(res, spec, events, so, stored, terrain, oso);
     std::printf("%s", render_result(res, events).c_str());
     if (!lo_json.empty()) {
@@ -252,8 +259,43 @@ void register_commands(CLI::App& app, int& rc) {
     }
   });
 
+  // aircraft opensky-tiles BBOX FROM TO: OpenSky's tiles over an area and time
+  auto* ot = air->add_subcommand("opensky-tiles", "make OpenSky's tiles (hour x 1 degree) over an area and time available here: bucket, else OpenSky");
+  static std::string ot_bbox, ot_from, ot_to;
+  static bool ot_push = false;
+  ot->add_option("bbox", ot_bbox, "WEST,SOUTH,EAST,NORTH")->required();
+  ot->add_option("from", ot_from, "start, UTC (YYYY-MM-DDTHH:MM:SS or epoch s)")->required();
+  ot->add_option("to", ot_to, "end, UTC")->required();
+  ot->add_flag("--push", ot_push, "upload new tiles to the aircraft bucket");
+  ot->callback([&rc] {
+    auto o = opensky::options_from_env();
+    o.push = ot_push, o.max_queries = 0;
+    const auto box = parse_bbox(ot_bbox);
+    if (!box) throw std::invalid_argument("bbox must be WEST,SOUTH,EAST,NORTH");
+    const auto st = opensky::prefetch(*box, parse_time(ot_from, "from"), parse_time(ot_to, "to"), o, true);
+    std::printf("%s\n", opensky::describe(st).c_str());
+    rc = st.missing ? 1 : 0;
+  });
+
+  // aircraft opensky-worker: answer the tile requests servers left in the bucket
+  auto* ow = air->add_subcommand("opensky-worker", "fetch the OpenSky tiles servers asked for (the bucket's opensky/requests/) and upload them");
+  static double ow_every = 0;
+  ow->add_option("--every", ow_every, "keep running, looking again every this many seconds (default: one pass)");
+  ow->callback([&rc] {
+    if (!bucket::enabled()) throw std::invalid_argument("needs GEOLOC_AIRPLANE_BUCKET");
+    if (!opensky::has_credentials()) throw std::invalid_argument("needs OPENSKY_USERNAME / OPENSKY_PASSWORD");
+    for (;;) {
+      const int n = opensky::work_queue([](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); });
+      std::printf("%d request(s) answered\n", n);
+      std::fflush(stdout);
+      if (ow_every <= 0) break;
+      std::this_thread::sleep_for(std::chrono::duration<double>(ow_every));
+    }
+    rc = 0;
+  });
+
   // aircraft fetch DAY...
-  auto* fe = air->add_subcommand("fetch", "store days of ADSB.lol history (non-jet aircraft), reading ~4 GB per day");
+  auto* fe =air->add_subcommand("fetch", "store days of ADSB.lol history (non-jet aircraft), reading ~4 GB per day");
   static std::vector<std::string> fe_days, fe_parts;
   static std::string fe_bbox;
   static bool fe_force = false, fe_jets = false, fe_push = false, fe_drop = false, fe_json = false;

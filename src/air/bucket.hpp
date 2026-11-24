@@ -12,6 +12,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -35,5 +36,11 @@ int push(const std::vector<std::string>& days = {});
 // Any object: downloaded to dst (false when the bucket has no such key), or uploaded.
 bool get_object(const std::string& key, const fs::path& dst);
 void put_object(const std::string& key, const fs::path& src);
+void delete_object(const std::string& key);
+// Keys under `prefix` (relative to it) -> ETag.
+std::map<std::string, std::string> list_keys(const std::string& prefix);
+// Many at once (16 in flight): (key, local path) pairs. get_objects returns the keys found.
+std::set<std::string> get_objects(const std::vector<std::pair<std::string, fs::path>>& items);
+void put_objects(const std::vector<std::pair<std::string, fs::path>>& items);
 
 }  // namespace geo::air::bucket

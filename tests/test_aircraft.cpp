@@ -992,6 +992,62 @@ TEST(AircraftOpenSky, MergeCountsAFlightOnce) {
   EXPECT_TRUE(same.only_opensky.empty() && same.gap_filled.empty());
 }
 
+TEST(AircraftOpenSky, TilesAreKeyedByPlaceAndHour) {
+  const std::int64_t h = 1788897600;  // 2026-09-08T20:00Z
+  EXPECT_EQ(opensky::tile_key({h, 40, -74}), "opensky/tiles/2026-09-08/20/40_-74.trk");
+  EXPECT_EQ(opensky::tile_key({h, -1, -1}), "opensky/tiles/2026-09-08/20/-1_-1.trk");
+  // Two hours by 2 x 2 tiles; a box ending on a whole degree takes no tile beyond it.
+  const auto ts = opensky::tiles_for(Bbox{-74.5, 40.2, -73.0, 41.0}, double(h) + 1800, double(h) + 3600 + 60);
+  EXPECT_EQ(ts.size(), 4u);
+  EXPECT_EQ(ts.front(), (opensky::Tile{h, 40, -75}));
+  EXPECT_EQ(ts.back(), (opensky::Tile{h + 3600, 40, -74}));
+}
+
+TEST(AircraftOpenSky, TilesAreReadWithADSBlolAsOneSource) {
+  const std::string old_cache = env("GEOLOC_CACHE");
+  const fs::path dir = test::make_temp_dir("opensky-tiles");
+  test::use_cache(dir);
+  ::unsetenv("GEOLOC_AIRPLANE_BUCKET");
+  const std::int64_t h = 1788897600;
+  // One aircraft flying east across the 8 / 9 degree line: half of it in each tile.
+  const Enu f(50.5, 9.0, 0.0);
+  Straight L{f, {-20000, 0, 900}, {60, 0, 0}, double(h)};
+  const Track whole = track_of(L, 9, "C172", double(h), double(h) + 660, 5.0);
+  std::vector<Fix> west, east;
+  for (auto& x : whole.fixes) (x.lon < 9.0 ? west : east).push_back(x);
+  ASSERT_FALSE(west.empty());
+  ASSERT_FALSE(east.empty());
+  for (auto [lo, fx] : {std::pair{8, west}, std::pair{9, east}}) {
+    Track t = whole;
+    t.fixes = fx;
+    const fs::path p = store::cache_dir() / opensky::tile_key({h, 50, lo});
+    fs::create_directories(p.parent_path());
+    atomic_write(p, encode_tracks({t}));
+  }
+  const Bbox box{8.5, 50.2, 9.5, 50.8};
+  const auto got = opensky::load_tiles(box, double(h), double(h) + 660);
+  ASSERT_EQ(got.size(), 1u) << "one aircraft, joined across its tiles";
+  // Stored as the day store's nodes: the whole pass, both sides of the tile edge.
+  EXPECT_DOUBLE_EQ(got[0].fixes.front().t, double(h));
+  EXPECT_DOUBLE_EQ(got[0].fixes.back().t, double(h) + 660);
+  EXPECT_TRUE(std::any_of(got[0].fixes.begin(), got[0].fixes.end(), [](const Fix& x) { return x.lon < 9.0; }));
+  EXPECT_TRUE(std::any_of(got[0].fixes.begin(), got[0].fixes.end(), [](const Fix& x) { return x.lon > 9.0; }));
+  EXPECT_TRUE(std::is_sorted(got[0].fixes.begin(), got[0].fixes.end(), [](const Fix& a, const Fix& b) { return a.t < b.t; }));
+  // As a search's source: ADSB.lol's own aircraft plus OpenSky's.
+  const Track other = track_of(Straight{f, {0, 5000, 900}, {0, 50, 0}, double(h)}, 4, "PA28", double(h), double(h) + 600, 5.0);
+  const TrackSource adsb = [&](const Bbox&, double, double) { return std::vector<Track>{other}; };
+  const auto both = opensky::with_tiles(adsb)(box, double(h), double(h) + 660);
+  std::set<std::uint32_t> icaos;
+  for (auto& s : both) icaos.insert(s.icao);
+  EXPECT_EQ(icaos, (std::set<std::uint32_t>{4, 9}));
+  // Outside every tile: ADSB.lol's answer, unchanged.
+  EXPECT_EQ(opensky::with_tiles(adsb)(Bbox{20, 10, 21, 11}, double(h), double(h) + 600).size(), 1u);
+  if (old_cache.empty()) ::unsetenv("GEOLOC_CACHE");
+  else test::use_cache(old_cache);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 TEST(AircraftOpenSky, AnswersComeFromTheCacheWithoutCredentials) {
   const std::string old_cache = env("GEOLOC_CACHE");
   const fs::path dir = test::make_temp_dir("opensky");
@@ -1003,15 +1059,19 @@ TEST(AircraftOpenSky, AnswersComeFromTheCacheWithoutCredentials) {
   EXPECT_THROW(opensky::fetch(w), opensky::NotConfigured);
   const Enu f(50.05, 8.55, 0.0);
   Straight L{f, {0, 0, 900}, {70, 0, 0}, double(w.t0)};
-  const fs::path p = store::cache_dir() / "opensky" / (opensky::cache_key(w) + ".trk");
+  // Answers are tiles: one UTC hour by 1 x 1 degree, in the day store's own encoding.
+  const opensky::Tile tile{w.hour, 50, 8};
+  ASSERT_EQ(opensky::tiles_for(w.box, double(w.t0), double(w.t1)), std::vector<opensky::Tile>{tile});
+  const fs::path p = store::cache_dir() / opensky::tile_key(tile);
   fs::create_directories(p.parent_path());
-  atomic_write(p, encode_tracks({track_of(L, 7, "C172", double(w.t0), double(w.t0) + 300, 5.0)}));
+  atomic_write(p, encode_tracks({track_of(L, 7, "C172", double(w.hour), double(w.hour) + 3500, 5.0)}));
   std::string src;
   const auto got = opensky::fetch(w, &src);
   EXPECT_EQ(src, "cache");
   ASSERT_EQ(got.size(), 1u);
   EXPECT_EQ(got[0].icao, 7u);
-  atomic_write(p, "");  // a window that held no aircraft
+  for (auto& f : got[0].fixes) EXPECT_TRUE(w.box.contains(f.lat, f.lon));  // read for the window's box only
+  atomic_write(p, "");  // a tile that held no aircraft
   EXPECT_TRUE(opensky::fetch(w).empty());
   if (old_cache.empty()) ::unsetenv("GEOLOC_CACHE");
   else test::use_cache(old_cache);

@@ -17,6 +17,8 @@
 | `geoloc aircraft fetch DAY\|FIRST..LAST... [--push [--drop]] [--force] [--parts A B] [--bbox W,S,E,N]` | Store days of ADSB.lol history (non-jets), newest first; `--push` uploads each to the aircraft bucket (skipping days it holds), `--drop` then frees the local copy |
 | `geoloc aircraft gaps [FIRST..LAST]` | Days the ADS-B history lacks (the aircraft bucket's, else this machine's) or holds almost nothing for, and the days built from OpenSky (default range: 2023-03-01 to yesterday) |
 | `geoloc aircraft opensky-day DAY\|FIRST..LAST... [--push] [--force] [--band DEG]` | Build days ADSB.lol lacks from OpenSky's history, as ADSB.lol days ([below](#opensky)); `--push` uploads each to the aircraft bucket; never over an ADSB.lol day without `--force` |
+| `geoloc aircraft opensky-tiles W,S,E,N FROM TO [--push]` | Fetch OpenSky's tiles (hour x 1 degree) over an area and time: from the bucket, else OpenSky ([below](#opensky)) |
+| `geoloc aircraft opensky-worker [--every S]` | Answer the OpenSky tile requests servers left in the aircraft bucket (fetch, upload, delete the request); `--every`: keep looking |
 | `geoloc aircraft push [DAY...]` \| `pull [DAY...]` | Sync ADS-B days with the aircraft bucket (`pull` alone: every day's coverage sidecar) |
 | `geoloc aircraft index [DAY...] [--force]` | Build stored days' chunk index (`<day>.idx`, ~3 MB, from the store alone; otherwise built on first use) |
 | `geoloc aircraft locate FILE --from ISO --to ISO --bbox W,S,E,N [--min-events N] [--no-type-prior] [--opensky [--opensky-places N]] [--json out]` | Aircraft-only search (`--no-type-prior`: keep aircraft whose type cannot make a flyover's tone; `--opensky` as for `locate`) |
@@ -26,7 +28,7 @@
 
 Reference data is stored under `~/.cache/geolocate-anything` (or `$GEOLOC_CACHE`); ADS-B
 days under `adsb/` there (~50 MB each, plus a ~3 MB chunk index `<day>.idx` built from it), DEM tiles under `dem/`,
-OpenSky's answers to the aircraft check under `opensky/` (`<key>.trk`, the same format, with the query beside it as `<key>.sql`).
+OpenSky's history under `opensky/tiles/<day>/<HH>/<lat>_<lon>.trk` (one UTC hour by 1 x 1 degree, the day store's own format; [below](#opensky)).
 
 Environment (all optional): `GEOLOC_GRID_BUCKET` with `GEOLOC_S3_ENDPOINT_URL`, `GEOLOC_GRID_ACCESS_KEY_ID`,
 `GEOLOC_GRID_SECRET_ACCESS_KEY`, `GEOLOC_S3_REGION` mirrors the store to an S3 bucket (and
@@ -74,17 +76,29 @@ a place out: it would have been heard between the flyovers, and was not. How it 
 - `GEOLOC_OPENSKY=1`: check by default. `GEOLOC_OPENSKY_PLACES` (default 5): best answers
   checked; `--opensky-places` overrides it. `GEOLOC_OPENSKY_RADIUS_KM` (default 30): around
   each.
-- Answers are cached under `<cache>/opensky/` and, with the aircraft bucket configured,
-  uploaded to it (`opensky/<key>.trk`; `GEOLOC_OPENSKY_PUSH=0` stops that). A machine
-  without credentials, or that cannot reach OpenSky, uses those copies. A question not
-  cached there leaves the search as it is, and the report says so (`opensky.status`:
-  `not configured` or `unreachable`).
+- OpenSky's history is kept in the same form as ADSB.lol's, so it is read by place and
+  time like any stored day: whole days ADSB.lol lacks as ordinary days (below), the rest
+  as **tiles** of one UTC hour by 1 x 1 degree, `opensky/tiles/<day>/<HH>/<lat>_<lon>.trk`
+  (south-west corner; the day store's own encoding of non-jet tracks as nodes, an empty
+  file where there were none), under `<cache>` and, with the aircraft bucket configured,
+  in the bucket under the same key (`GEOLOC_OPENSKY_PUSH=0` stops uploads).
+- With OpenSky on, every aircraft search reads ADSB.lol and the tiles together (merged by
+  ICAO address): the tiles of its box and window that this machine or the bucket holds
+  are fetched first, never queried. The check then asks OpenSky (with credentials) for the
+  tiles of its own places it still lacks, at most `GEOLOC_OPENSKY_MAX_QUERIES` (default
+  72) per search. Tiles it cannot get are written to the bucket as a request
+  (`opensky/requests/`), and the check leaves the search as it is, saying so
+  (`opensky.status`: `not configured` or `unreachable`).
+- `geoloc aircraft opensky-worker [--every S]`, on a machine that can reach OpenSky,
+  answers those requests: fetches the tiles, uploads them and deletes the request.
+  `geoloc aircraft opensky-tiles W,S,E,N FROM TO [--push]` fetches the tiles over any
+  area and time ahead of a search.
 - OpenSky resets connections from cloud networks (a cloud session could not connect at
   all), so queries are run from a home connection; a server can still read what the
   bucket holds.
 - Queries follow OpenSky's rules: each filters on the `hour` partition, one hour at a
-  time, a box of about 60 km and a time window inside it, selects only the columns read,
-  and runs alone. The same question is never asked twice.
+  time over the rectangle of the missing tiles (halved while an answer reaches 1M rows),
+  selects only the columns read, and runs alone. No tile is asked for twice.
 
 **Days ADSB.lol lacks.** `geoloc aircraft gaps` lists them; `geoloc aircraft opensky-day
 DAY --push` builds each from OpenSky into an ordinary day store (`adsb/<day>.trk`, its

@@ -49,8 +49,9 @@ between. On the recording that inspired it, the answer lands within 160 m of the
 
 Optionally (`--opensky`), the best answers are checked against
 [The OpenSky Network](https://opensky-network.org)'s history too, a second receiver
-network: an aircraft only OpenSky saw can rule a place out. Days ADSB.lol has no archive
-for are built from OpenSky ([setup](docs/usage.md#opensky); non-commercial use only).
+network: an aircraft only OpenSky saw can rule a place out. OpenSky's history is stored like
+ADSB.lol's (whole days ADSB.lol has no archive for, and hour x 1° tiles elsewhere), so the
+searches read both together ([setup](docs/usage.md#opensky); non-commercial use only).
 
 Limits: only aircraft with ADS-B coverage, jets excluded; it needs a time window (a day for
 two or more flyovers, the hum's second for one).

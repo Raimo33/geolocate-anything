@@ -29,7 +29,6 @@ namespace {
 constexpr const char* TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
 constexpr const char* TRINO_URL = "https://trino.opensky-network.org";
 constexpr const char* FORMAT = "opensky-v1";  // bump when the SQL's meaning or the conversion changes
-constexpr const char* PREFIX = "opensky/";
 constexpr std::int64_t ROW_LIMIT = 2000000;   // a safety net: a tight box and hour holds far fewer
 
 std::string hex(const unsigned char* p, std::size_t n) {
@@ -65,8 +64,6 @@ std::string b64url_decode(std::string_view in) {
 
 double snap_down(double x) { return std::floor(x / SNAP_DEG + 1e-9) * SNAP_DEG; }
 double snap_up(double x) { return std::ceil(x / SNAP_DEG - 1e-9) * SNAP_DEG; }
-
-fs::path cache_path(const std::string& key) { return store::cache_dir() / "opensky" / (key + ".trk"); }
 
 std::vector<Track> load_cached(const fs::path& p) {
   auto bytes = read_file(p);
@@ -389,53 +386,11 @@ Options options_from_env() {
   if (auto n = to_int(env("GEOLOC_OPENSKY_PLACES")); n && *n > 0) o.places = int(*n);
   if (auto r = to_double(env("GEOLOC_OPENSKY_RADIUS_KM")); r && *r > 0) o.radius_m = *r * 1000.0;
   o.push = env("GEOLOC_OPENSKY_PUSH") != "0";
+  if (auto n = to_int(env("GEOLOC_OPENSKY_MAX_QUERIES")); n && *n >= 0) o.max_queries = int(*n);
   return o;
 }
 
 bool has_credentials() { return !env("OPENSKY_USERNAME").empty() && !env("OPENSKY_PASSWORD").empty(); }
-
-std::vector<Track> fetch(const Window& w, std::string* source, bool push) {
-  const std::string key = cache_key(w);
-  const fs::path p = cache_path(key);
-  auto said = [&](const char* s) {
-    if (source) *source = s;
-  };
-  if (fs::exists(p)) {
-    said("cache");
-    return load_cached(p);
-  }
-  if (bucket::enabled()) {
-    try {
-      if (bucket::get_object(PREFIX + key + ".trk", p)) {
-        said("bucket");
-        return load_cached(p);
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "opensky: bucket: " << e.what() << std::endl;
-    }
-  }
-  if (!has_credentials()) throw NotConfigured("this window is not cached, and OPENSKY_USERNAME / OPENSKY_PASSWORD are not set");
-  const std::string q = sql(w);
-  std::cerr << "opensky: querying " << iso(double(w.t0)) << " .. " << iso(double(w.t1)) << " [" << w.box.west << "," << w.box.south << ","
-            << w.box.east << "," << w.box.north << "]" << std::endl;
-  const auto rows = query_rows(q);
-  if (std::int64_t(rows.size()) >= ROW_LIMIT) std::cerr << "opensky: row limit reached, window truncated" << std::endl;
-  const std::size_t n_rows = rows.size();
-  const auto tracks = tracks_of_rows(rows);
-  std::cerr << "opensky: " << n_rows << " state vectors, " << tracks.size() << " non-jet aircraft" << std::endl;
-  const bool any = std::any_of(tracks.begin(), tracks.end(), [](const Track& t) { return !t.fixes.empty(); });
-  atomic_write(p, any ? encode_tracks(tracks) : std::string());
-  atomic_write(fs::path(p).replace_extension(".sql"), q + "\n");
-  if (push && bucket::enabled()) {
-    try {
-      bucket::put_object(PREFIX + key + ".trk", p);
-    } catch (const std::exception& e) {
-      std::cerr << "opensky: upload to the bucket failed: " << e.what() << std::endl;
-    }
-  }
-  said("opensky");
-  return load_cached(p);
-}
 
 // ---------------------------------------------------------------- checking answers
 
@@ -476,6 +431,7 @@ void check(SearchResult& r, const Spectrogram& spec, const std::vector<Event>& e
            const Options& o) {
   if (!o.enabled) return;
   auto rep = std::make_shared<Report>();
+  rep->tiles = o.tiles;
   r.opensky = rep;
   rep->status = "checked";
   if (r.candidates.empty()) {
@@ -518,7 +474,7 @@ void check(SearchResult& r, const Spectrogram& spec, const std::vector<Event>& e
         rep->places.clear();
         return;
       }
-      rep->queries.push_back(cache_key(w) + " " + iso(double(w.t0)) + " .. " + iso(double(w.t1)) + " (" + src + ")");
+      rep->queries.push_back(iso(double(w.t0)) + " .. " + iso(double(w.t1)) + " (" + src + ")");
       for (auto& t : got) {
         auto [it, fresh] = by.try_emplace(t.icao, t);
         if (!fresh) it->second.fixes.insert(it->second.fixes.end(), t.fixes.begin(), t.fixes.end());
@@ -562,7 +518,10 @@ void check(SearchResult& r, const Spectrogram& spec, const std::vector<Event>& e
     // the search without OpenSky finds, scoring nearly as well. (Elsewhere in the box
     // they may still survive, beyond the silence range of what OpenSky adds.)
     const bool same = bm && wm && haversine_m(wm->lat, wm->lon, bm->lat, bm->lon) <= SAME_M && wm->score >= SAME_SCORE * bm->score;
-    if (!bm) {
+    if (!bm && wm) {
+      pc.outcome = "found with OpenSky";
+      pc.detail = "these flights fit here only with OpenSky's tracks (ADSB.lol alone does not find them)";
+    } else if (!bm) {
       pc.outcome = "not reproduced";
       pc.detail = "the place's own search with ADSB.lol alone did not find these flights again; left as it was";
     } else if (same && with.candidates[0].combo != c.combo && with.candidates[0].score > wm->score &&
@@ -771,6 +730,290 @@ DayStats build_day(const std::string& day, const DayOptions& o, const std::funct
   return st;
 }
 
+// ---------------------------------------------------------------- tiles
+
+namespace {
+
+constexpr std::int64_t TILE_LIMIT = 1000000;  // rows per tile query; more: the rectangle is halved
+
+std::string two(int h) {
+  char b[4];
+  std::snprintf(b, sizeof b, "%02d", h);
+  return b;
+}
+
+fs::path tile_path(const Tile& t) { return store::cache_dir() / tile_key(t); }
+std::string hour_prefix(std::int64_t hour) { return "opensky/tiles/" + iso_date(hour) + "/" + two(int((hour % 86400) / 3600)) + "/"; }
+bool day_from_opensky(std::int64_t hour) { return fs::exists(source_path(iso_date(hour))); }
+Tile tile_of_key(const std::string& key);  // after tile_key
+
+std::vector<Track> tracks_of_tiles(const std::vector<Tile>& tiles, double t0, double t1, const Bbox& box) {
+  std::map<std::uint32_t, Track> by;
+  for (auto& t : tiles) {
+    const fs::path p = tile_path(t);
+    if (!fs::exists(p)) continue;
+    for (auto& tr : load_cached(p)) {
+      auto [it, fresh] = by.try_emplace(tr.icao, tr);
+      if (!fresh) it->second.fixes.insert(it->second.fixes.end(), tr.fixes.begin(), tr.fixes.end());
+    }
+  }
+  std::vector<Track> out;
+  for (auto& [icao, tr] : by) {
+    tidy(tr);
+    tr.fixes = clip(tr.fixes, t0, t1, box);
+    if (!tr.fixes.empty()) out.push_back(std::move(tr));
+  }
+  return out;
+}
+
+}  // namespace
+
+std::vector<Tile> tiles_for(const Bbox& box, double t0, double t1) {
+  std::vector<Tile> out;
+  const int la0 = std::max(-90, int(std::floor(box.south))), la1 = std::min(89, int(std::ceil(box.north)) - 1);
+  const int lo0 = std::max(-180, int(std::floor(box.west))), lo1 = std::min(179, int(std::ceil(box.east)) - 1);
+  for (std::int64_t h = floor_div(std::int64_t(std::floor(t0)), 3600) * 3600; h <= std::int64_t(std::floor(t1)); h += 3600)
+    for (int la = la0; la <= std::max(la0, la1); ++la)
+      for (int lo = lo0; lo <= std::max(lo0, lo1); ++lo) out.push_back({h, la, lo});
+  return out;
+}
+
+std::string tile_key(const Tile& t) { return hour_prefix(t.hour) + std::to_string(t.lat) + "_" + std::to_string(t.lon) + ".trk"; }
+
+namespace {
+Tile tile_of_key(const std::string& key) {  // opensky/tiles/2026-09-08/20/40_-74.trk
+  std::vector<std::string> parts;
+  for (auto v : split(key, '/')) parts.emplace_back(v);
+  if (parts.size() != 5) throw std::runtime_error("not a tile key: " + key);
+  const auto day = parse_iso_utc(parts[2]);
+  const auto us = parts[4].find('_');
+  if (!day || us == std::string::npos) throw std::runtime_error("not a tile key: " + key);
+  return {std::int64_t(*day) + std::stoi(parts[3]) * 3600, std::stoi(parts[4].substr(0, us)), std::stoi(parts[4].substr(us + 1))};
+}
+}  // namespace
+
+std::vector<Tile> fetch_tiles(std::vector<Tile> tiles, int max_queries, bool push, TileStats& st) {
+  std::map<std::int64_t, std::set<std::pair<int, int>>> by_hour;
+  for (auto& t : tiles) by_hour[t.hour].insert({t.lat, t.lon});
+  std::vector<Tile> left;
+  std::vector<std::pair<std::string, fs::path>> uploads;
+  for (auto& [hour, want] : by_hour) {
+    int la0 = 90, la1 = -91, lo0 = 180, lo1 = -181;
+    for (auto& [la, lo] : want) la0 = std::min(la0, la), la1 = std::max(la1, la), lo0 = std::min(lo0, lo), lo1 = std::max(lo1, lo);
+    std::vector<std::array<int, 4>> stack{{la0, lo0, la1 + 1, lo1 + 1}};  // south, west, north, east (whole degrees)
+    while (!stack.empty()) {
+      const auto r = stack.back();
+      stack.pop_back();
+      std::vector<std::pair<int, int>> inside;
+      for (auto& [la, lo] : want)
+        if (la >= r[0] && la < r[2] && lo >= r[1] && lo < r[3]) inside.push_back({la, lo});
+      if (inside.empty()) continue;
+      if (max_queries > 0 && st.queries >= max_queries) {
+        for (auto& [la, lo] : inside) left.push_back({hour, la, lo});
+        continue;
+      }
+      if (st.queries) std::this_thread::sleep_for(std::chrono::seconds(1));
+      std::cerr << "opensky: tiles " << iso(double(hour)) << " [" << r[1] << "," << r[0] << "," << r[3] << "," << r[2] << "], " << inside.size()
+                << " tile(s)" << std::endl;
+      auto rows = query_rows(sql(Window{hour, hour, hour + 3599, Bbox{double(r[1]), double(r[0]), double(r[3]), double(r[2])}}, TILE_LIMIT));
+      ++st.queries;
+      if (std::int64_t(rows.size()) >= TILE_LIMIT && (r[2] - r[0] > 1 || r[3] - r[1] > 1)) {
+        ++st.splits;
+        if (r[3] - r[1] >= r[2] - r[0]) {
+          const int m = r[1] + (r[3] - r[1]) / 2;
+          stack.push_back({r[0], m, r[2], r[3]}), stack.push_back({r[0], r[1], r[2], m});
+        } else {
+          const int m = r[0] + (r[2] - r[0]) / 2;
+          stack.push_back({m, r[1], r[2], r[3]}), stack.push_back({r[0], r[1], m, r[3]});
+        }
+        continue;
+      }
+      st.rows += rows.size();
+      std::map<std::pair<int, int>, std::vector<Row>> per;
+      for (auto& row : rows) per[{int(std::floor(row.lat)), int(std::floor(row.lon))}].push_back(row);
+      rows.clear();
+      rows.shrink_to_fit();
+      for (auto& tl : inside) {
+        const Tile t{hour, tl.first, tl.second};
+        auto it = per.find(tl);
+        auto tracks = it == per.end() ? std::vector<Track>{} : tracks_of_rows(std::move(it->second));
+        const bool any = std::any_of(tracks.begin(), tracks.end(), [](const Track& x) { return !x.fixes.empty(); });
+        const fs::path p = tile_path(t);
+        fs::create_directories(p.parent_path());
+        atomic_write(p, any ? encode_tracks(tracks) : std::string());
+        ++st.fetched;
+        if (push) uploads.push_back({tile_key(t), p});
+      }
+    }
+  }
+  if (!uploads.empty() && bucket::enabled()) {
+    try {
+      bucket::put_objects(uploads);
+    } catch (const std::exception& e) {
+      std::cerr << "opensky: upload of tiles failed: " << e.what() << std::endl;
+    }
+  }
+  return left;
+}
+
+namespace {
+
+// Makes `all` available here: this machine, else the bucket, else (query) OpenSky, at
+// most max_queries (0: no limit). Returns the tiles still missing.
+std::vector<Tile> ensure_tiles(const std::vector<Tile>& all, bool query, int max_queries, bool push, TileStats& st) {
+  st.tiles += all.size();
+  std::vector<Tile> need;
+  for (auto& t : all) {
+    if (day_from_opensky(t.hour)) ++st.skipped;
+    else if (fs::exists(tile_path(t))) ++st.local;
+    else need.push_back(t);
+  }
+  if (!need.empty() && bucket::enabled()) {
+    try {
+      std::set<std::int64_t> hours;
+      for (auto& t : need) hours.insert(t.hour);
+      std::set<std::string> held;
+      for (auto h : hours)
+        for (auto& [k, e] : bucket::list_keys(hour_prefix(h))) held.insert(hour_prefix(h) + k);
+      std::vector<std::pair<std::string, fs::path>> items;
+      std::vector<Tile> rest;
+      for (auto& t : need) {
+        if (held.count(tile_key(t))) items.push_back({tile_key(t), tile_path(t)});
+        else rest.push_back(t);
+      }
+      const auto got = bucket::get_objects(items);
+      st.bucket += got.size();
+      for (auto& [k, p] : items)
+        if (!got.count(k)) rest.push_back(tile_of_key(k));
+      need = std::move(rest);
+    } catch (const std::exception& e) {
+      st.note = std::string("bucket: ") + e.what();
+    }
+  }
+  if (!need.empty() && query && has_credentials()) {
+    try {
+      need = fetch_tiles(std::move(need), max_queries, push, st);
+    } catch (const std::exception& e) {
+      st.note = std::string("OpenSky: ") + e.what();
+    }
+  }
+  st.missing += need.size();
+  return need;
+}
+
+void queue_missing(const std::vector<Tile>& need, TileStats& st) {
+  if (need.empty() || !bucket::enabled()) return;
+  try {
+    enqueue(need);
+    st.queued = true;
+  } catch (const std::exception& e) {
+    std::cerr << "opensky: could not queue the missing tiles: " << e.what() << std::endl;
+  }
+}
+
+}  // namespace
+
+TileStats prefetch(const Bbox& box, double t0, double t1, const Options& o, bool query) {
+  TileStats st;
+  const auto need = ensure_tiles(tiles_for(box, t0, t1), query, o.max_queries, o.push, st);
+  if (query) queue_missing(need, st);
+  return st;
+}
+
+std::vector<Track> fetch(const Window& w, std::string* source, bool push) {
+  TileStats st;
+  const auto all = tiles_for(w.box, double(w.t0), double(w.t1));
+  const auto need = ensure_tiles(all, true, 0, push, st);
+  if (!need.empty()) {
+    queue_missing(need, st);
+    if (!has_credentials())
+      throw NotConfigured(std::to_string(need.size()) + " OpenSky tile(s) are neither here nor in the bucket, and OPENSKY_USERNAME / OPENSKY_PASSWORD are not set" +
+                          (st.queued ? " (queued for `geoloc aircraft opensky-worker`)" : ""));
+    throw std::runtime_error(st.note.empty() ? "tiles missing" : st.note);
+  }
+  if (source) *source = st.fetched ? "opensky" : st.bucket ? "bucket" : st.skipped == all.size() ? "day from OpenSky" : "cache";
+  // A day built from OpenSky already holds these tracks: ADSB.lol's source returns them.
+  return tracks_of_tiles(all, double(w.t0), double(w.t1), w.box);
+}
+
+std::vector<Track> load_tiles(const Bbox& box, double t0, double t1) { return tracks_of_tiles(tiles_for(box, t0, t1), t0, t1, box); }
+
+TrackSource with_tiles(TrackSource adsb) {
+  return [adsb = std::move(adsb)](const Bbox& b, double t0, double t1) {
+    auto ad = adsb(b, t0, t1);
+    auto os = load_tiles(b, t0, t1);
+    if (os.empty()) return ad;
+    return merge(ad, os).segments;
+  };
+}
+
+void enqueue(const std::vector<Tile>& tiles) {
+  std::vector<Tile> ts = tiles;
+  std::sort(ts.begin(), ts.end());
+  json::array arr;
+  std::string ident;
+  for (auto& t : ts) {
+    arr.push_back(json::array{t.hour, t.lat, t.lon});
+    ident += std::to_string(t.hour) + ":" + std::to_string(t.lat) + ":" + std::to_string(t.lon) + ";";
+  }
+  const std::string key = "opensky/requests/" + sha256_hex(ident).substr(0, 24) + ".json";
+  TempFile tmp(".json");
+  atomic_write(tmp.path, dump(json::object{{"created", now_isoformat()}, {"tiles", arr}}));
+  bucket::put_object(key, tmp.path);
+}
+
+int work_queue(const std::function<void(const std::string&)>& progress) {
+  auto say = [&](const std::string& m) {
+    if (progress) progress(m);
+  };
+  int done = 0;
+  for (auto& [k, etag] : bucket::list_keys("opensky/requests/")) {
+    const std::string key = "opensky/requests/" + k;
+    TempFile tmp(".json");
+    if (!bucket::get_object(key, tmp.path)) continue;
+    std::vector<Tile> tiles;
+    for (auto& v : parse_json(*read_file(tmp.path)).at("tiles").as_array()) {
+      auto& a = v.as_array();
+      tiles.push_back({std::int64_t(as_number(a.at(0))), int(as_number(a.at(1))), int(as_number(a.at(2)))});
+    }
+    Options o;
+    o.max_queries = 0, o.push = true;
+    // What the bucket or this machine has already is only uploaded or skipped.
+    std::vector<Tile> need, upload;
+    std::set<std::int64_t> hours;
+    for (auto& t : tiles) hours.insert(t.hour);
+    std::set<std::string> held;
+    for (auto h : hours)
+      for (auto& [kk, e] : bucket::list_keys(hour_prefix(h))) held.insert(hour_prefix(h) + kk);
+    for (auto& t : tiles) {
+      if (held.count(tile_key(t)) || day_from_opensky(t.hour)) continue;
+      (fs::exists(tile_path(t)) ? upload : need).push_back(t);
+    }
+    TileStats st;
+    say("request " + k + ": " + std::to_string(tiles.size()) + " tile(s), " + std::to_string(need.size()) + " to fetch, " + std::to_string(upload.size()) +
+        " to upload");
+    std::vector<std::pair<std::string, fs::path>> items;
+    for (auto& t : upload) items.push_back({tile_key(t), tile_path(t)});
+    if (!items.empty()) bucket::put_objects(items);
+    fetch_tiles(need, 0, true, st);
+    bucket::delete_object(key);
+    say("request " + k + " done: " + std::to_string(st.queries) + " queries, " + std::to_string(st.rows) + " rows");
+    ++done;
+  }
+  return done;
+}
+
+std::string describe(const TileStats& st) {
+  char b[300];
+  std::snprintf(b, sizeof b, "OpenSky tiles: %zu needed (hour x 1 deg), %zu here, %zu from the bucket, %zu fetched (%d queries), %zu missing", st.tiles,
+                st.local, st.bucket, st.fetched, st.queries, st.missing);
+  std::string out = b;
+  if (st.queued) out += " (queued for the worker)";
+  if (st.skipped) out += ", " + std::to_string(st.skipped) + " in days built from OpenSky";
+  if (!st.note.empty()) out += "; " + st.note;
+  return out;
+}
+
 // ---------------------------------------------------------------- reporting
 
 json::object report_json(const Report& rep) {
@@ -801,13 +1044,20 @@ json::object report_json(const Report& rep) {
     places.push_back(std::move(o));
   }
   for (auto& q : rep.queries) queries.push_back(json::value(q));
+  json::value tiles = nullptr;
+  if (rep.tiles)
+    tiles = json::object{{"tiles", rep.tiles->tiles},     {"local", rep.tiles->local},   {"bucket", rep.tiles->bucket},
+                         {"fetched", rep.tiles->fetched}, {"missing", rep.tiles->missing}, {"skipped_opensky_days", rep.tiles->skipped},
+                         {"queries", rep.tiles->queries}, {"queued", rep.tiles->queued}, {"note", rep.tiles->note}};
   return {{"status", rep.status},     {"note", rep.note},       {"places", places},
           {"dropped", rep.dropped},   {"changed", rep.changed}, {"queries", queries},
+          {"tiles", tiles},
           {"source", "The OpenSky Network, https://opensky-network.org (non-commercial research use)"}};
 }
 
 std::string render_report(const Report& rep) {
   std::string out = "  OpenSky: " + rep.status + (rep.note.empty() ? "" : ": " + rep.note) + "\n";
+  if (rep.tiles) out += "    " + describe(*rep.tiles) + "\n";
   char b[512];
   for (auto& p : rep.places) {
     std::snprintf(b, sizeof b, "    #%d %.5f, %.5f (%s): %s%s%s; segments ADSB.lol %zu, OpenSky %zu\n", p.rank + 1, p.lat, p.lon, p.combo.c_str(),
